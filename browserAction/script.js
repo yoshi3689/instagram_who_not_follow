@@ -122,29 +122,81 @@ function pollUntilDone() {
 /* UI RENDER FUNCTIONS */
 /* ------------------------ */
 
-function renderMessage(progress) {
-  document.getElementById("content").innerHTML = `
-    <p>Checking... ${progress} / 100%</p>
-    <button id="cancelBtn">Cancel</button>
+function renderMessage(progress = 0) {
+  const content = document.getElementById("content");
+
+  content.innerHTML = `
+    <div class="flex flex-col gap-6">
+
+      <div class="bg-white rounded-xl p-6 shadow-sm text-center">
+
+        <h2 class="text-slate-900 font-semibold text-lg mb-2">
+          Analyzing...
+        </h2>
+
+        <div class="space-y-2 mt-4">
+          <div class="flex justify-between text-sm">
+            <span class="text-slate-600">Progress</span>
+            <span class="font-semibold">${progress}%</span>
+          </div>
+
+          <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+            <div 
+              class="bg-blue-600 h-full transition-all duration-300"
+              style="width: ${progress}%">
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <button
+        id="cancelBtn"
+        class="w-full bg-white hover:bg-slate-50 text-slate-700 font-medium py-3 px-6 rounded-xl border border-slate-200"
+      >
+        Cancel Scan
+      </button>
+
+    </div>
   `;
 
-  document.getElementById("cancelBtn").addEventListener("click", async () => {
-  await browser.runtime.sendMessage({
-    action: "CANCEL_JOB"
-  });
-  // if (pollingInterval) {
-  //   clearInterval(pollingInterval);
-  //   pollingInterval = null;
-  // }
-    console.log("cancel pressed");
-});
+  document.getElementById("cancelBtn")
+    .addEventListener("click", async () => {
+      await browser.runtime.sendMessage({ action: "CANCEL_JOB" });
+    });
 }
 
 
-function renderRunButton(status) {
+function renderRunButton(statusText = "") {
   const content = document.getElementById("content");
-  content.innerHTML =
-    `${status}<button id="runCheck">Find Non-Followers</button>`;
+
+  content.innerHTML = `
+    <div class="flex flex-col gap-6">
+
+      <div class="bg-white rounded-xl p-6 shadow-sm text-center">
+        <h2 class="text-slate-900 font-semibold text-lg mb-2">
+          Ready to Audit
+        </h2>
+        <p class="text-slate-600 text-sm">
+          Analyze your Instagram account to find users who don't follow you back
+        </p>
+
+        ${statusText ? `
+          <div class="mt-3 text-xs text-slate-500">
+            ${statusText}
+          </div>
+        ` : ""}
+      </div>
+
+      <button
+        id="runCheck"
+        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-4 px-6 rounded-xl transition-colors shadow-lg"
+      >
+        Start Audit
+      </button>
+
+    </div>
+  `;
 
   document.getElementById("runCheck")
     .addEventListener("click", startCheck);
@@ -166,24 +218,58 @@ function renderResults(users) {
   const content = document.getElementById("content");
 
   content.innerHTML = `
-    <p><strong>Non-followers (${users.length})</strong></p>
-    <div id="userList"></div>
-    <button id="runAgain">Run Again</button>
+    <div class="flex flex-col gap-4">
+
+      <div class="bg-white rounded-xl p-5 shadow-sm">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-slate-700 font-medium text-sm">
+            Snapshot
+          </h2>
+          <div class="bg-slate-900 text-white font-bold px-4 py-2 rounded-lg text-lg">
+            ${users.length}
+          </div>
+        </div>
+        <p class="text-slate-600 text-xs">
+          Total non-followers detected
+        </p>
+      </div>
+
+      <button
+        id="runAgain"
+        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-3 px-6 rounded-xl"
+      >
+        Run New Scan
+      </button>
+
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="px-5 py-3 bg-slate-50 border-b border-slate-200">
+          <h3 class="text-slate-700 font-medium text-sm">
+            Non-Followers List
+          </h3>
+        </div>
+        <div id="userList" class="max-h-[220px] overflow-y-auto"></div>
+      </div>
+
+    </div>
   `;
 
   const userList = document.getElementById("userList");
 
   users.forEach(user => {
     const row = document.createElement("div");
-    row.className = "user-row";
+    row.className =
+      "flex justify-between items-center px-5 py-3 border-b last:border-b-0";
+
     row.innerHTML = `
-      <a href="https://www.instagram.com/${user.username}/" target="_blank">
-        ${user.username}
+      <a 
+        href="https://www.instagram.com/${user.username}/" 
+        target="_blank"
+        class="text-slate-900 font-medium text-sm hover:text-blue-600"
+      >
+        @${user.username}
       </a>
-      <button class="unfollow-btn" data-id="${user.id}">
-        Unfollow
-      </button>
     `;
+
     userList.appendChild(row);
   });
 
