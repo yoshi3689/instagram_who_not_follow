@@ -112,7 +112,7 @@ function pollUntilDone() {
     if (status.status === "cancelled") {
       clearInterval(pollingInterval);
       pollingInterval = null;
-      renderRunButton(status.status);
+      renderCancelled();
     }
 
   }, 500);
@@ -167,30 +167,37 @@ function renderMessage(progress = 0) {
 }
 
 
-function renderRunButton(statusText = "") {
+function renderRunButton(statusText = "", lastChecked = null) {
   const content = document.getElementById("content");
 
   content.innerHTML = `
-    <div class="flex flex-col gap-6">
+    <div class="flex flex-col items-center gap-6">
 
-      <div class="bg-white rounded-xl p-6 shadow-sm text-center">
+      <div class="w-full bg-white rounded-xl p-6 shadow-sm text-center">
+
+        <div class="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-full mb-4">
+          <span class="text-slate-600 text-2xl">📈</span>
+        </div>
+
         <h2 class="text-slate-900 font-semibold text-lg mb-2">
           Ready to Audit
         </h2>
-        <p class="text-slate-600 text-sm">
+
+        <p class="text-slate-600 text-sm mb-4">
           Analyze your Instagram account to find users who don't follow you back
         </p>
 
-        ${statusText ? `
-          <div class="mt-3 text-xs text-slate-500">
-            ${statusText}
+        ${lastChecked ? `
+          <div class="text-xs text-slate-500 bg-slate-50 rounded-lg py-2 px-3">
+            Last checked: ${lastChecked}
           </div>
         ` : ""}
+
       </div>
 
       <button
         id="runCheck"
-        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-4 px-6 rounded-xl transition-colors shadow-lg"
+        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-4 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
       >
         Start Audit
       </button>
@@ -214,24 +221,56 @@ function renderDifferentProfile(loginCheck) {
     .addEventListener("click", startCheck);
 }
 
+function renderCancelled() {
+  const content = document.getElementById("content");
+
+  content.innerHTML = `
+    <div class="flex flex-col items-center gap-6">
+
+      <div class="w-full bg-white rounded-xl p-6 shadow-sm text-center">
+
+        <div class="inline-flex items-center justify-center w-14 h-14 bg-orange-100 rounded-full mb-3">
+          <div class="w-7 h-7 bg-orange-500 rounded-full"></div>
+        </div>
+
+        <div class="inline-block bg-orange-500 text-white font-bold text-sm px-4 py-2 rounded-lg">
+          Scan Cancelled
+        </div>
+
+      </div>
+
+      <button
+        id="restartBtn"
+        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-4 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
+      >
+        Start New Audit
+      </button>
+
+    </div>
+  `;
+
+  document.getElementById("restartBtn")
+    .addEventListener("click", startCheck);
+}
+
 function renderResults(users) {
   const content = document.getElementById("content");
 
   content.innerHTML = `
     <div class="flex flex-col gap-4">
 
-      <div class="bg-white rounded-xl p-5 shadow-sm">
-        <div class="flex justify-between items-center mb-2">
-          <h2 class="text-slate-700 font-medium text-sm">
-            Snapshot
-          </h2>
-          <div class="bg-slate-900 text-white font-bold px-4 py-2 rounded-lg text-lg">
-            ${users.length}
-          </div>
+      <div class="bg-white rounded-xl p-6 shadow-sm text-center">
+        <h2 class="text-slate-600 font-medium text-xs uppercase tracking-wide mb-4">
+          The Verdict
+        </h2>
+
+        <div class="text-6xl font-black text-slate-900 mb-2">
+          ${users.length}
         </div>
-        <p class="text-slate-600 text-xs">
-          Total non-followers detected
-        </p>
+
+        <div class="text-slate-700 text-base font-semibold">
+          people are<br/>leaving you<br/>hanging
+        </div>
       </div>
 
       <button
@@ -258,15 +297,40 @@ function renderResults(users) {
   users.forEach(user => {
     const row = document.createElement("div");
     row.className =
-      "flex justify-between items-center px-5 py-3 border-b last:border-b-0";
+      "flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0";
 
     row.innerHTML = `
-      <a 
-        href="https://www.instagram.com/${user.username}/" 
+      <div class="flex items-center gap-3 flex-1 min-w-0">
+
+        <div class="w-10 h-10 flex-shrink-0 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden">
+
+          ${user.profile_pic_url ? `
+            <img
+              src="${user.profile_pic_url}"
+              alt="${user.username}"
+              class="w-full h-full object-cover"
+              onerror="this.style.display='none'"
+            />
+          ` : `
+            <span class="text-slate-400 text-sm">👤</span>
+          `}
+        </div>
+
+        <a
+          href="https://www.instagram.com/${user.username}/"
+          target="_blank"
+          class="text-slate-900 font-medium text-sm hover:text-blue-600 transition-colors truncate"
+        >
+          @${user.username}
+        </a>
+      </div>
+
+      <a
+        href="https://www.instagram.com/${user.username}/"
         target="_blank"
-        class="text-slate-900 font-medium text-sm hover:text-blue-600"
+        class="text-slate-600 hover:text-slate-900 text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex-shrink-0 ml-2"
       >
-        @${user.username}
+        View
       </a>
     `;
 
