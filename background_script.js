@@ -35,7 +35,34 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
   } catch (err) {
     return { loggedIn: false };
   }
+  }
+
+if (request.action === "CANCEL_JOB") {
+  try {
+    const [tab] = await browser.tabs.query({
+      active: true,
+      currentWindow: true
+    });
+
+    if (!tab?.id) {
+      console.log("No active tab found for cancel.");
+      return { success: false };
+    }
+
+    const response = await browser.tabs.sendMessage(tab.id, {
+      action: "CANCEL_JOB"
+    });
+    currentJob.status = "cancelled";
+    currentJob.progress = 0;
+
+    return response || { success: true };
+
+  } catch (err) {
+    console.error("Cancel failed:", err);
+    return { success: false };
+  }
 }
+
 
   // 🔎 Get job status
   if (request.action === "GET_STATUS") {

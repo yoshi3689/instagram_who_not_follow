@@ -47,7 +47,7 @@ async function handleStatus() {
 
   console.log("Status:", status);
 
-  if (status.status === "idle") {
+  if (status.status === "idle" || status.status === "cancelled") {
     renderRunButton();
   }
 
@@ -109,6 +109,12 @@ function pollUntilDone() {
       renderError(status.error);
     }
 
+    if (status.status === "cancelled") {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+      renderRunButton(status.status);
+    }
+
   }, 500);
 }
 
@@ -116,14 +122,29 @@ function pollUntilDone() {
 /* UI RENDER FUNCTIONS */
 /* ------------------------ */
 
-function renderMessage(msg) {
-  document.getElementById("content").innerHTML = `<p>${msg}%</p>`;
+function renderMessage(progress) {
+  document.getElementById("content").innerHTML = `
+    <p>Checking... ${progress} / 100%</p>
+    <button id="cancelBtn">Cancel</button>
+  `;
+
+  document.getElementById("cancelBtn").addEventListener("click", async () => {
+  await browser.runtime.sendMessage({
+    action: "CANCEL_JOB"
+  });
+  // if (pollingInterval) {
+  //   clearInterval(pollingInterval);
+  //   pollingInterval = null;
+  // }
+    console.log("cancel pressed");
+});
 }
 
-function renderRunButton() {
+
+function renderRunButton(status) {
   const content = document.getElementById("content");
   content.innerHTML =
-    `<button id="runCheck">Find Non-Followers</button>`;
+    `${status}<button id="runCheck">Find Non-Followers</button>`;
 
   document.getElementById("runCheck")
     .addEventListener("click", startCheck);

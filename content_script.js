@@ -10,160 +10,13 @@ Modifications: Adjusted for Firefox WebExtension usage
 */
 
 let urls = null;
+let isCancelled = false;
+
 (async () => {
   const src = chrome.runtime.getURL("./urls.js");
-  urls = await import(src);
+  urls = await import(src).then(res => res.default);
 })();
 console.log("content_script loaded")
-
-// async function findNonFollowers(username) {
-//   let followers = [];
-//   let followings = [];
-//   let dontFollowMeBack = [];
-//   let iDontFollowBack = [];
-
-//   try {
-//     console.log("=== STARTING PROCESS ===");
-//     console.log("Username:", username);
-
-//     console.log("Fetching user search...");
-
-//     const userQueryRes = await fetch(
-//       `https://www.instagram.com/web/search/topsearch/?query=${username}`
-//     );
-
-//     console.log("Search response status:", userQueryRes.status);
-
-//     const userQueryJson = await userQueryRes.json();
-//     console.log("Search JSON:", userQueryJson);
-
-//     if (!userQueryJson.users || userQueryJson.users.length === 0) {
-//       console.log("❌ No users found in search response.");
-//       return { error: "User not found in search response." };
-//     }
-
-//     const matchedUser = userQueryJson.users
-//       .map(u => u.user)
-//       .find(u => u.username === username);
-
-//     if (!matchedUser) {
-//       console.log("❌ Exact username match not found.");
-//       return { error: "Exact username not found." };
-//     }
-
-//     const userId = matchedUser.pk;
-//     console.log("Resolved userId:", userId);
-
-//     let after = null;
-//     let has_next = true;
-
-//     console.log("=== FETCHING FOLLOWERS ===");
-
-//     while (has_next) {
-//       console.log("Followers page cursor:", after);
-
-//       const res = await fetch(
-//         `https://www.instagram.com/graphql/query/?query_hash=c76146de99bb02f6415203be841dd25a&variables=` +
-//         encodeURIComponent(JSON.stringify({
-//           id: userId,
-//           include_reel: true,
-//           fetch_mutual: true,
-//           first: 50,
-//           after: after,
-//         }))
-//       );
-
-//       console.log("Followers fetch status:", res.status);
-
-//       const json = await res.json();
-//       console.log("Followers JSON page:", json);
-
-//       if (!json.data?.user?.edge_followed_by) {
-//         console.log("❌ Followers response structure unexpected.");
-//         return { error: "Followers API structure changed or blocked." };
-//       }
-
-//       has_next = json.data.user.edge_followed_by.page_info.has_next_page;
-//       after = json.data.user.edge_followed_by.page_info.end_cursor;
-
-//       followers = followers.concat(
-//         json.data.user.edge_followed_by.edges.map(({ node }) => ({
-//           id: node.id,
-//           username: node.username
-//         }))
-//       );
-
-//       console.log("Followers collected so far:", followers.length);
-//     }
-
-//     console.log("=== FETCHING FOLLOWINGS ===");
-
-//     after = null;
-//     has_next = true;
-
-//     while (has_next) {
-//       console.log("Followings page cursor:", after);
-
-//       const res = await fetch(
-//         `https://www.instagram.com/graphql/query/?query_hash=d04b0a864b4b54837c0d870b0e77e076&variables=` +
-//         encodeURIComponent(JSON.stringify({
-//           id: userId,
-//           include_reel: true,
-//           fetch_mutual: true,
-//           first: 50,
-//           after: after,
-//         }))
-//       );
-
-//       console.log("Followings fetch status:", res.status);
-
-//       const json = await res.json();
-//       console.log("Followings JSON page:", json);
-
-//       if (!json.data?.user?.edge_follow) {
-//         console.log("❌ Followings response structure unexpected.");
-//         return { error: "Followings API structure changed or blocked." };
-//       }
-
-//       has_next = json.data.user.edge_follow.page_info.has_next_page;
-//       after = json.data.user.edge_follow.page_info.end_cursor;
-
-//       followings = followings.concat(
-//         json.data.user.edge_follow.edges.map(({ node }) => ({
-//           id: node.id,
-//           username: node.username,
-//           profile_pic_url: node.profile_pic_url
-//         }))
-//       );
-
-//       console.log("Followings collected so far:", followings.length);
-//     }
-
-//     console.log("=== CALCULATING DIFFERENCES ===");
-
-//     dontFollowMeBack = followings.filter(f =>
-//       !followers.some(fl => fl.username === f.username)
-//     );
-
-//     iDontFollowBack = followers.filter(f =>
-//       !followings.some(fl => fl.username === f.username)
-//     );
-
-//     console.log("Done!");
-//     console.log("Followers:", followers);
-//     console.log("Followings:", followings);
-//     console.log("DontFollowMeBack:", dontFollowMeBack);
-//     console.log("IDontFollowBack:", iDontFollowBack);
-
-//     return {
-//       dontFollowMeBack,
-//     };
-
-//   } catch (err) {
-//     console.error("🔥 ERROR CAUGHT:", err);
-//     return { error: err.toString() };
-//   }
-// }
 
 async function sendProgress(percent) {
     const rounded = Math.round(percent);
@@ -189,6 +42,12 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
   while (hasNext) {
 
     console.log(`➡ Fetching ${type} page... after=${after}`);
+    if (isCancelled) {
+      await browser.runtime.sendMessage({
+      action: "JOB_CANCELLED"
+      });
+      return; // stop execution
+    }
 
     // Fetch followers or following
     const res = await fetch(
@@ -255,54 +114,88 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
 }
 
 async function findNonFollowers(username) {
+  try {
+    console.log("🔎 Starting findNonFollowers for:", username);
 
-  console.log("🔎 Starting findNonFollowers for:", username);
+    const searchRes = await fetch(
+      `${urls.search}?query=${username}`
+    );
 
-  // Resolve userId (same as your original code)
-  const searchRes = await fetch(
-    `${urls.search}?query=${username}`
-  );
+    if (!searchRes.ok) {
+      return { error: "Search request failed." };
+    }
 
-  const searchJson = await searchRes.json();
+    const searchJson = await searchRes.json();
 
-  const matchedUser = searchJson.users
-    .map(u => u.user)
-    .find(u => u.username === username);
+    if (!searchJson?.users?.length) {
+      return { error: "User not found." };
+    }
 
-  if (!matchedUser) {
-    return { error: "User not found." };
+    const matchedUser = searchJson.users
+      .map(u => u.user)
+      .find(u => u.username === username);
+
+    if (!matchedUser) {
+      return { error: "User not found." };
+    }
+
+    const userId = matchedUser.pk;
+
+    // Fetch followers
+    const followers = await fetchAllUsers({
+      userId,
+      type: "followers",
+      progressStart: 0,
+      progressEnd: 50,
+    });
+
+    if (!Array.isArray(followers)) {
+      console.warn("Followers is not array:", followers);
+      return { error: "Failed to fetch followers." };
+    }
+
+    // Fetch followings
+    const followings = await fetchAllUsers({
+      userId,
+      type: "following",
+      progressStart: 50,
+      progressEnd: 100,
+    });
+
+    if (!Array.isArray(followings)) {
+      console.warn("Followings is not array:", followings);
+      return { error: "Failed to fetch followings." };
+    }
+
+    const followerSet = new Set(
+      followers.map(u => u.username)
+    );
+
+    const dontFollowMeBack =
+      followings.filter(f => !followerSet.has(f.username));
+
+    console.log("🎉 Completed");
+
+    return { dontFollowMeBack };
+
+  } catch (error) {
+
+    if (error.name === "AbortError") {
+      console.log("🛑 Aborted safely.");
+      throw error; // let outer handler deal with it
+    }
+
+    console.error("findNonFollowers error:", error);
+    return { error: "Unexpected error occurred." };
   }
-
-  const userId = matchedUser.pk;
-
-  // 0–50%
-  const followers = await fetchAllUsers({
-    userId,
-    type: "followers",
-    progressStart: 0,
-    progressEnd: 50
-  });
-
-  // 50–100%
-  const followings = await fetchAllUsers({
-    userId,
-    type: "following",
-    progressStart: 50,
-    progressEnd: 100
-  });
-
-  const followerSet = new Set(followers.map(u => u.username));
-
-  const dontFollowMeBack =
-    followings.filter(f => !followerSet.has(f.username));
-
-  console.log("🎉 Completed");
-
-  return { dontFollowMeBack };
 }
 
 browser.runtime.onMessage.addListener(async (request) => {
-
+      if (request.action === "CANCEL_JOB") {
+      console.log("🛑 Cancelling job...");
+      isCancelled = true;
+      return;
+    }
   try {
       console.log("📩 Message received in content script:", request);
       console.log("🌍 Current URL:", window.location.href);
@@ -359,11 +252,11 @@ browser.runtime.onMessage.addListener(async (request) => {
     loggedInUsername,
     profileUsername
   };
-}
+    }
 
   // ▶ RUN CHECK
-  if (request.action === "RUN_CHECK") {
-
+    if (request.action === "RUN_CHECK") {
+      isCancelled = false;
     console.log("▶ Running RUN_CHECK...");
 
     if (window.location.pathname.startsWith("/accounts/login")) {
