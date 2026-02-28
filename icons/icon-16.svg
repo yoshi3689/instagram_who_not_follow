@@ -1,0 +1,27 @@
+<svg viewBox="0 0 16 16"
+  xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGradient16" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3730a3;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle background -->
+  <path d="M 2.5 1 Q 1 1 1 2.5 L 1 13.5 Q 1 15 2.5 15 L 13.5 15 Q 15 15 15 13.5 L 15 2.5 Q 15 1 13.5 1 Z" fill="url(#bgGradient16)"/>
+
+  <!-- User silhouette -->
+  <g transform="translate(8, 8)">
+    <!-- Head circle -->
+    <circle cx="0" cy="-1.5" r="1" fill="white" opacity="0.95"/>
+
+    <!-- Body/shoulders -->
+    <path d="M -1.2 -0.2 Q -1.2 0.8 -0.2 1.2 L 0.2 1.2 Q 1.2 0.8 1.2 -0.2 Z" fill="white" opacity="0.95"/>
+
+    <!-- Magnifying glass overlay -->
+    <g transform="translate(0.7, -0.5)">
+      <circle cx="0" cy="0" r="0.7" fill="none" stroke="white" stroke-width="0.15" opacity="0.9"/>
+      <line x1="0.5" y1="0.5" x2="1.1" y2="1.1" stroke="white" stroke-width="0.15" opacity="0.9" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

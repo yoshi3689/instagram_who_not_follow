@@ -122,7 +122,12 @@ if (request.action === "JOB_DONE") {
   currentJob.result = request.result;
   currentJob.progress = 100;
   currentJob.timestamp = Date.now();
-
+  browser.notifications.create({
+    type: "basic",
+    iconUrl: "icons/icon-128.svg",
+    title: "Follower Scan Complete",
+    message: `Found ${request.result.dontFollowMeBack.length} followers not following you back.`,
+  });
   browser.browserAction.setBadgeText({ text: "✓" });
   await browser.storage.local.set({
     finalResult: request.result

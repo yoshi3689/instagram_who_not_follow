@@ -1,0 +1,30 @@
+<svg viewBox="0 0 128 128"
+  xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3730a3;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle background -->
+  <path d="M 20 10 Q 10 10 10 20 L 10 108 Q 10 118 20 118 L 108 118 Q 118 118 118 108 L 118 20 Q 118 10 108 10 Z" fill="url(#bgGradient)"/>
+
+  <!-- User silhouette -->
+  <g transform="translate(64, 64)">
+    <!-- Head circle -->
+    <circle cx="0" cy="-12" r="8" fill="white" opacity="0.95"/>
+
+    <!-- Body/shoulders -->
+    <path d="M -10 -2 Q -10 6 -2 10 L 2 10 Q 10 6 10 -2 Z" fill="white" opacity="0.95"/>
+
+    <!-- Magnifying glass overlay -->
+    <g transform="translate(6, -4)">
+      <!-- Circle (lens) -->
+      <circle cx="0" cy="0" r="6" fill="none" stroke="white" stroke-width="1.2" opacity="0.9"/>
+
+      <!-- Handle -->
+      <line x1="4" y1="4" x2="9" y2="9" stroke="white" stroke-width="1.2" opacity="0.9" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

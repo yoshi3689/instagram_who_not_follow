@@ -1,10 +1,10 @@
 {
 	"manifest_version": 2,
 	"name": "InstagramWhoFollows",
-	"description": "CHeck who follows/not follow on instagram ",
+	"description": "Check who follows/not follow on instagram ",
 	"version": "0.0.0",
   "permissions": [
-    "activeTab","tabs", "storage"
+    "activeTab","tabs", "storage", "notifications"
   ],
 	"icons": {
 		"64": "icons/icon.png"

@@ -303,17 +303,7 @@ function renderResults(users) {
       <div class="flex items-center gap-3 flex-1 min-w-0">
 
         <div class="w-10 h-10 flex-shrink-0 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden">
-
-          ${user.profile_pic_url ? `
-            <img
-              src="${user.profile_pic_url}"
-              alt="${user.username}"
-              class="w-full h-full object-cover"
-              onerror="this.style.display='none'"
-            />
-          ` : `
-            <span class="text-slate-400 text-sm">👤</span>
-          `}
+          <span class="text-slate-400 text-sm">👤</span>
         </div>
 
         <a
