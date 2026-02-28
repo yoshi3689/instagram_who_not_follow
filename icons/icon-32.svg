@@ -1,27 +1,18 @@
-<svg viewBox="0 0 32 32"
-  xmlns="http://www.w3.org/2000/svg">
+<svg width="32" height="32" viewBox="0 0 32 32"
+  xmlns="http://www.w3.org">
   <defs>
-    <linearGradient id="bgGradient32" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#3730a3;stop-opacity:1" />
+    <linearGradient id="orange32" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#E65100;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF8F00;stop-opacity:1" />
     </linearGradient>
   </defs>
-
-  <!-- Squircle background -->
-  <path d="M 5 2 Q 2 2 2 5 L 2 27 Q 2 30 5 30 L 27 30 Q 30 30 30 27 L 30 5 Q 30 2 27 2 Z" fill="url(#bgGradient32)"/>
-
-  <!-- User silhouette -->
-  <g transform="translate(16, 16)">
-    <!-- Head circle -->
-    <circle cx="0" cy="-3" r="2" fill="white" opacity="0.95"/>
-
-    <!-- Body/shoulders -->
-    <path d="M -2.4 -0.5 Q -2.4 1.5 -0.5 2.5 L 0.5 2.5 Q 2.4 1.5 2.4 -0.5 Z" fill="white" opacity="0.95"/>
-
-    <!-- Magnifying glass overlay -->
-    <g transform="translate(1.4, -1)">
-      <circle cx="0" cy="0" r="1.4" fill="none" stroke="white" stroke-width="0.3" opacity="0.9"/>
-      <line x1="1" y1="1" x2="2.2" y2="2.2" stroke="white" stroke-width="0.3" opacity="0.9" stroke-linecap="round"/>
+  <!-- x=13.5 (balanced), y=32 (absolute bottom), scale=0.85 (fills height) -->
+  <g transform="translate(13.5, 32) scale(0.85)" fill="url(#orange32)">
+    <circle cx="0" cy="-18" r="9" />
+    <path d="M -16 2 Q -16 -8 0 -8 T 16 2 L 16 10 L -16 10 Z" />
+    <g transform="translate(12, -12)">
+      <path d="M 0 -8 A 8 8 0 1 0 0 8 A 8 8 0 1 0 0 -8 M 0 -4 A 4 4 0 1 1 0 4 A 4 4 0 1 1 0 -4" />
+      <rect x="5.5" y="5.5" width="9" height="4.5" rx="2" transform="rotate(45 5.5 5.5)" />
     </g>
   </g>
 </svg>
