@@ -5,7 +5,8 @@ let currentJob = {
   progress: 0,
   result: null,
   error: null,
-  timestamp: null
+  timestamp: null,
+  tabId: null
 };
 
 
@@ -60,27 +61,25 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
   ================================= */
 
 if (request.action === "CANCEL_JOB") {
-
   try {
-    const [tab] = await browser.tabs.query({
-      active: true,
-      currentWindow: true
-    });
+    // 🔥 Minimal Change: Use the ID we already have in our state
 
-    if (!tab?.id) {
-      return { success: false };
+    if (!currentJob.tabId) {
+      return { success: false, error: "No active job tab found" };
     }
 
-    await browser.tabs.sendMessage(tab.id, {
+    // Send the message directly to the specific tab running the scan
+    await browser.tabs.sendMessage(currentJob.tabId, {
       action: "CANCEL_JOB"
     });
 
     // ✅ Reset job state
     currentJob.status = "cancelled";
     currentJob.progress = 0;
+    currentJob.tabId = null; // Clear the reference
 
     // ✅ Clear badge
-    browser.browserAction.setBadgeText({ text: "0%" });
+    browser.browserAction.setBadgeText({ text: "" });
 
     await broadcastStatus();
 
@@ -104,49 +103,36 @@ if (request.action === "CANCEL_JOB") {
      ▶ START CHECK
   ================================= */
 
-if (request.action === "START_CHECK") {
+  if (request.action === "START_CHECK") {
+  console.log(request, currentJob)
+  
 
-  if (currentJob.status === "running") {
-    return { status: "already_running" };
+  // ✅ The Popup will send the tabId in the request
+    const targetTabId = request.tabId; 
+      if (currentJob.status === "running") {
+    console.log("already running")
+    return Promise.resolve({ status: "already_running" });
   }
 
-  // 1️⃣ Update state immediately
+    if (!targetTabId) {
+    console.log("no tab Id exists")
+    return Promise.resolve({ status: "error", message: "No Tab ID provided" });
+  }
+
+  // Update our persistent state
   currentJob = {
     status: "running",
     progress: 0,
     result: null,
-    error: null,
-    timestamp: Date.now()
+    tabId: targetTabId // 🔒 Now locked in our "Source of Truth"
   };
 
-  // 2️⃣ Broadcast immediately
-  broadcastStatus(); // 🔥 removed await
+  broadcastStatus();
 
-  // 3️⃣ Start job asynchronously (do NOT await)
-  (async () => {
-    try {
-      const tabs = await browser.tabs.query({
-        active: true,
-        currentWindow: true
-      });
+  // Tell the specific tab to start working
+  browser.tabs.sendMessage(targetTabId, { action: "RUN_CHECK" });
 
-      if (!tabs.length) {
-        throw new Error("No active tab found");
-      }
-
-      await browser.tabs.sendMessage(tabs[0].id, {
-        action: "RUN_CHECK"
-      });
-
-    } catch (err) {
-      currentJob.status = "error";
-      currentJob.error = err.toString();
-      broadcastStatus();
-    }
-  })();
-
-  // 4️⃣ Return immediately
-  return { status: "started" };
+  return Promise.resolve({ status: "started" });
 }
 
   /* ===============================
@@ -190,10 +176,6 @@ if (request.action === "START_CHECK") {
     });
 
     browser.browserAction.setBadgeText({ text: "✓" });
-
-    await browser.storage.local.set({
-      finalResult: request.result
-    });
 
     await broadcastStatus(); // 🔥 NEW
 

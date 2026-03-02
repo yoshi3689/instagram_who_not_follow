@@ -27,7 +27,7 @@ async function init() {
       return;
     }
 
-    await handleStatus();
+    await handleStatus(tab.id);
 
   } catch (err) {
     console.error("Popup error:", err);
@@ -39,9 +39,9 @@ async function init() {
 /* STATUS HANDLING */
 /* ------------------------ */
 
-async function handleStatus() {
+async function handleStatus(tabId) {
   const status = await browser.runtime.sendMessage({
-    action: "GET_STATUS"
+    action: "GET_STATUS", tabId
   });
 
   if (!status) return;
@@ -69,8 +69,9 @@ async function handleStatus() {
 /* ------------------------ */
 
 async function startCheck() {
+  const {id} = await getActiveInstagramProfileTab();
   const response = await browser.runtime.sendMessage({
-    action: "START_CHECK"
+    action: "START_CHECK", tabId: id
   });
 
   if (response.status === "started") {
@@ -297,14 +298,9 @@ content.innerHTML = `
   <div class="text-center">
     <h2 class="text-slate-900 font-semibold text-lg mb-2">
       ${count === 0 
-        ? "Everyone follows you back 🎉" 
-        : (count === 1 ? '1 Person is' : 'People are') + " leaving you hanging"}
-    </h2>
-    <p class="text-slate-600 text-sm">
-      ${count === 0 
         ? "Your follower list is perfectly in sync." 
         : "These users don't follow you back"}
-    </p>
+    </h2>
   </div>
 
   <button

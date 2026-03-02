@@ -4,7 +4,7 @@
 	"description": "Check who follows/not follow on instagram ",
 	"version": "0.0.0",
   "permissions": [
-    "activeTab","tabs", "storage", "notifications"
+    "activeTab", "notifications"
   ],
 	"background": {
 		"scripts": [
@@ -23,6 +23,7 @@
   "default_icon": {
     "16": "icons/icon-16.svg",
     "32": "icons/icon-32.svg",
+    "48": "icons/icon-48.svg",
     "64": "icons/icon-128.svg",
     "128": "icons/icon-128.svg"
   },
