@@ -1,27 +1,20 @@
 // Put all the javascript code here, that you want to execute after page load.
 
-/*
-Follower fetching logic adapted from:
-https://stackoverflow.com/questions/XXXXX
-
-Author: USERNAME (Stack Overflow)
-License: CC BY-SA 4.0
-Modifications: Adjusted for Firefox WebExtension usage
-*/
-
 let urls = null;
 let isCancelled = false;
+let currentAbortController = null;
 
 (async () => {
   const src = chrome.runtime.getURL("./urls.js");
   urls = await import(src).then(res => res.default);
 })();
-console.log("content_script loaded")
+
+/* ------------------------ */
+/* PROGRESS */
+/* ------------------------ */
 
 async function sendProgress(percent) {
-    const rounded = Math.round(percent);
-
-  console.log("📊 Sending progress:", rounded + "%");
+  const rounded = Math.round(percent);
 
   await browser.runtime.sendMessage({
     action: "JOB_PROGRESS",
@@ -29,9 +22,11 @@ async function sendProgress(percent) {
   });
 }
 
-async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
+/* ------------------------ */
+/* FETCH ALL USERS */
+/* ------------------------ */
 
-  console.log(`🚀 Starting fetch for ${type}...`);
+async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
 
   let users = [];
   let after = null;
@@ -41,15 +36,12 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
 
   while (hasNext) {
 
-    console.log(`➡ Fetching ${type} page... after=${after}`);
     if (isCancelled) {
-      await browser.runtime.sendMessage({
-      action: "JOB_CANCELLED"
-      });
-      return; // stop execution
+      throw new Error("JOB_CANCELLED");
     }
 
-    // Fetch followers or following
+    currentAbortController = new AbortController();
+
     const res = await fetch(
       `${type === "followers" ? urls.followers : urls.following}&variables=` +
         encodeURIComponent(JSON.stringify({
@@ -58,7 +50,8 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
           fetch_mutual: true,
           first: 50,
           after
-        }))
+        })),
+      { signal: currentAbortController.signal }
     );
 
     const json = await res.json();
@@ -69,13 +62,11 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
         : json.data?.user?.edge_follow;
 
     if (!container) {
-      console.log(`❌ ${type} structure unexpected`);
-      return [];
+      throw new Error("Invalid response structure");
     }
 
     if (!total) {
       total = container.count;
-      console.log(`📦 Total ${type}:`, total);
     }
 
     const newUsers = container.edges.map(({ node }) => ({
@@ -87,8 +78,6 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
     users.push(...newUsers);
     fetched += newUsers.length;
 
-    console.log(`📥 ${type}: ${fetched}/${total}`);
-
     hasNext = container.page_info.has_next_page;
     after = container.page_info.end_cursor;
 
@@ -99,36 +88,38 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
         progressStart +
         (progressEnd - progressStart) * localPercent;
 
-      await browser.runtime.sendMessage({
-        action: "JOB_PROGRESS",
-        progress: Math.round(weighted)
-      });
-
-      console.log("📊 Progress:", Math.round(weighted) + "%");
+      await sendProgress(weighted);
     }
-    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    await new Promise(resolve => setTimeout(resolve, 800));
   }
 
-  console.log(`✅ Finished fetching ${type}`);
   return users;
 }
 
+/* ------------------------ */
+/* FIND NON FOLLOWERS */
+/* ------------------------ */
+
 async function findNonFollowers(username) {
+
   try {
-    console.log("🔎 Starting findNonFollowers for:", username);
+
+    currentAbortController = new AbortController();
 
     const searchRes = await fetch(
-      `${urls.search}?query=${username}`
+      `${urls.search}?query=${username}`,
+      { signal: currentAbortController.signal }
     );
 
     if (!searchRes.ok) {
-      return { error: "Search request failed." };
+      throw new Error("Search request failed");
     }
 
     const searchJson = await searchRes.json();
 
     if (!searchJson?.users?.length) {
-      return { error: "User not found." };
+      throw new Error("User not found");
     }
 
     const matchedUser = searchJson.users
@@ -136,12 +127,11 @@ async function findNonFollowers(username) {
       .find(u => u.username === username);
 
     if (!matchedUser) {
-      return { error: "User not found." };
+      throw new Error("User not found");
     }
 
     const userId = matchedUser.pk;
 
-    // Fetch followers
     const followers = await fetchAllUsers({
       userId,
       type: "followers",
@@ -149,23 +139,12 @@ async function findNonFollowers(username) {
       progressEnd: 50,
     });
 
-    if (!Array.isArray(followers)) {
-      console.warn("Followers is not array:", followers);
-      return { error: "Failed to fetch followers." };
-    }
-
-    // Fetch followings
     const followings = await fetchAllUsers({
       userId,
       type: "following",
       progressStart: 50,
       progressEnd: 100,
     });
-
-    if (!Array.isArray(followings)) {
-      console.warn("Followings is not array:", followings);
-      return { error: "Failed to fetch followings." };
-    }
 
     const followerSet = new Set(
       followers.map(u => u.username)
@@ -174,114 +153,128 @@ async function findNonFollowers(username) {
     const dontFollowMeBack =
       followings.filter(f => !followerSet.has(f.username));
 
-    console.log("🎉 Completed");
-
-    return { dontFollowMeBack };
+    return {
+      success: true,
+      dontFollowMeBack,
+      error: null
+    };
 
   } catch (error) {
 
-    if (error.name === "AbortError") {
-      console.log("🛑 Aborted safely.");
-      throw error; // let outer handler deal with it
+    if (error.message === "JOB_CANCELLED") {
+      return {
+        success: false,
+        dontFollowMeBack: [],
+        error: "Job cancelled"
+      };
     }
 
-    console.error("findNonFollowers error:", error);
-    return { error: "Unexpected error occurred." };
+    if (error.name === "AbortError") {
+      return {
+        success: false,
+        dontFollowMeBack: [],
+        error: "Network request aborted"
+      };
+    }
+
+    return {
+      success: false,
+      dontFollowMeBack: [],
+      error: error.message || "Unexpected error"
+    };
   }
 }
 
+/* ------------------------ */
+/* MESSAGE LISTENER */
+/* ------------------------ */
+
 browser.runtime.onMessage.addListener(async (request) => {
-      if (request.action === "CANCEL_JOB") {
-      console.log("🛑 Cancelling job...");
-      isCancelled = true;
-      return;
+
+  if (request.action === "CANCEL_JOB") {
+    isCancelled = true;
+
+    if (currentAbortController) {
+      currentAbortController.abort();
     }
-  try {
-      console.log("📩 Message received in content script:", request);
-      console.log("🌍 Current URL:", window.location.href);
-    console.log("📂 Pathname:", window.location.pathname);
-    if (request.action === "CHECK_LOGIN") {
 
-  console.log("🔍 Running CHECK_LOGIN...");
-
-  await new Promise(resolve => setTimeout(resolve, 700));
-
-  if (window.location.pathname.startsWith("/accounts/login")) {
-    return { loggedIn: false };
+    return;
   }
 
-  const homeIcon = document.querySelector('svg[aria-label="Home"]');
-  const loggedIn = !!homeIcon;
+  if (request.action === "CHECK_LOGIN") {
 
-  function getLoggedInUsername() {
-    const links = document.querySelectorAll("a[href^='/']");
-
-    for (const link of links) {
-      const href = link.getAttribute("href");
-
-      if (!href) continue;
-
-      if (
-        href.startsWith("/explore") ||
-        href.startsWith("/reels") ||
-        href.startsWith("/direct") ||
-        href.startsWith("/accounts")
-      ) {
-        continue;
-      }
-
-      const match = href.match(/^\/([^\/]+)\//);
-      if (match && match[1].length > 2) {
-        return match[1];
-      }
-    }
-
-    return null;
-  }
-
-  const loggedInUsername = getLoggedInUsername();
-
-  const profileUsername =
-    window.location.pathname.split("/").filter(Boolean)[0] || null;
-
-  console.log("🔐 Logged in:", loggedIn);
-  console.log("👤 Logged in username:", loggedInUsername);
-
-  return {
-    loggedIn,
-    loggedInUsername,
-    profileUsername
-  };
-    }
-
-  // ▶ RUN CHECK
-    if (request.action === "RUN_CHECK") {
-      isCancelled = false;
-    console.log("▶ Running RUN_CHECK...");
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     if (window.location.pathname.startsWith("/accounts/login")) {
-      console.log("❌ Not logged in (login page)");
-      return { error: "You are not logged into Instagram." };
+      return { loggedIn: false };
     }
 
-    const username =
-      window.location.pathname.split("/").filter(Boolean)[0];
+    const homeIcon = document.querySelector('svg[aria-label="Home"]');
+    const loggedIn = !!homeIcon;
 
-    console.log("🔎 Running findNonFollowers for:", username);
+    function getLoggedInUsername() {
+      const links = document.querySelectorAll("a[href^='/']");
 
-    const result = await findNonFollowers(username);
+      for (const link of links) {
+        const href = link.getAttribute("href");
+        if (!href) continue;
 
-    await browser.runtime.sendMessage({
-      action: "JOB_DONE",
-      result
-    });
+        if (
+          href.startsWith("/explore") ||
+          href.startsWith("/reels") ||
+          href.startsWith("/direct") ||
+          href.startsWith("/accounts")
+        ) continue;
 
-    console.log("✅ Result:", result);
+        const match = href.match(/^\/([^\/]+)\//);
+        if (match && match[1].length > 2) {
+          return match[1];
+        }
+      }
 
-    return result;
+      return null;
+    }
+
+    const loggedInUsername = getLoggedInUsername();
+    const profileUsername =
+      window.location.pathname.split("/").filter(Boolean)[0] || null;
+
+    return {
+      loggedIn,
+      loggedInUsername,
+      profileUsername
+    };
   }
-  } catch (error) {
-    throw new Error(error);
-  }
 
+  if (request.action === "RUN_CHECK") {
+
+    isCancelled = false;
+
+    try {
+      const username =
+        window.location.pathname.split("/").filter(Boolean)[0];
+
+      const result = await findNonFollowers(username);
+
+      if (isCancelled) return;
+
+      await browser.runtime.sendMessage({
+        action: "JOB_DONE",
+        result
+      });
+
+      return result;
+
+    } catch (error) {
+
+        await browser.runtime.sendMessage({
+          action: "JOB_DONE",
+          result: {
+            success: false,
+            dontFollowMeBack: [],
+            error: error.message || "Unexpected error"
+          }
+        });
+    }
+  }
 });

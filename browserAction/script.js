@@ -1,16 +1,15 @@
 document.addEventListener("DOMContentLoaded", init);
+window.addEventListener("unload", cleanup);
 
 let pollingInterval = null;
 
 async function init() {
   console.log("POPUP LOADED");
 
-  const contentDiv = document.getElementById("content");
-
   try {
     const tab = await getActiveInstagramProfileTab();
     if (!tab) {
-      renderMessage("This extension only works on Instagram profile pages.");
+      renderMessageBox("This extension only works on Instagram profile pages.");
       return;
     }
 
@@ -19,7 +18,7 @@ async function init() {
     });
 
     if (!loginCheck.loggedIn) {
-      renderMessage("Please log in to Instagram first.");
+      renderMessageBox("Please log in to Instagram first.");
       return;
     }
 
@@ -32,7 +31,7 @@ async function init() {
 
   } catch (err) {
     console.error("Popup error:", err);
-    renderMessage("Something went wrong.");
+    renderMessageBox("Something went wrong.");
   }
 }
 
@@ -45,21 +44,19 @@ async function handleStatus() {
     action: "GET_STATUS"
   });
 
-  console.log("Status:", status);
+  if (!status) return;
 
   if (status.status === "idle" || status.status === "cancelled") {
     renderRunButton();
   }
 
-if (status.status === "running") {
-  renderMessage(status.progress || 0);
-  pollUntilDone();  // resume if popup reopened
-}
+  if (status.status === "running") {
+    renderProgress(status.progress || 0);
+    pollUntilDone();
+  }
 
   if (status.status === "done") {
-    console.log(status.status)
-    const { finalResult } = await browser.storage.local.get("finalResult");
-    renderResults(finalResult.dontFollowMeBack);
+    renderResults(status.result);
   }
 
   if (status.status === "error") {
@@ -72,149 +69,140 @@ if (status.status === "running") {
 /* ------------------------ */
 
 async function startCheck() {
-  console.log("starting follower count")
   const response = await browser.runtime.sendMessage({
     action: "START_CHECK"
   });
 
-  if (response.status === "started" || response.status === "already_running") {
-    renderMessage(0);
+  if (response.status === "started") {
+    renderProgress(0);
     pollUntilDone();
+  }
+
+  if (response.status === "already_running") {
+    handleStatus(); // resume correctly
   }
 }
 
 function pollUntilDone() {
-  if (pollingInterval) return; // prevent duplicate intervals
+  if (pollingInterval) return;
 
   pollingInterval = setInterval(async () => {
-    console.log("polling");
 
     const status = await browser.runtime.sendMessage({
       action: "GET_STATUS"
     });
+    console.log("get stuatus")
+
+    if (!status) return;
 
     if (status.status === "running") {
-      renderMessage(status.progress || 0);
+      renderProgress(status.progress || 0);
     }
 
     if (status.status === "done") {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
-      renderResults(status.result.dontFollowMeBack);
+      cleanup();
+      renderResults(status.result);
+      if (!status.result) return;
     }
 
     if (status.status === "error") {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
+      cleanup();
       renderError(status.error);
     }
 
     if (status.status === "cancelled") {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
+      cleanup();
       renderCancelled();
     }
 
   }, 500);
 }
 
+function cleanup() {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+  }
+}
+
 /* ------------------------ */
 /* UI RENDER FUNCTIONS */
 /* ------------------------ */
 
-function renderMessage(progress = 0) {
+function renderProgress(progress = 0) {
   const content = document.getElementById("content");
 
-  content.innerHTML = `
-    <div class="flex flex-col gap-6">
+content.innerHTML = `
+<div class="flex flex-col items-center justify-center gap-6 py-8">
+  <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full">
+    <div class="w-8 h-8 border-[3px] border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+  </div>
+  <h2 class="text-slate-900 font-semibold text-lg mb-2">
+      You can close this popup
+    </h2>
+  <div class="text-center w-full px-2">
+    <p class="text-slate-600 text-sm">
+      Scanning in background...
+    </p>
+    
+    
 
-      <div class="bg-white rounded-xl p-6 shadow-sm text-center">
-
-        <h2 class="text-slate-900 font-semibold text-lg mb-2">
-          Analyzing...
-        </h2>
-
-        <div class="space-y-2 mt-4">
-          <div class="flex justify-between text-sm">
-            <span class="text-slate-600">Progress</span>
-            <span class="font-semibold">${progress}%</span>
-          </div>
-
-          <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-            <div 
-              class="bg-blue-600 h-full transition-all duration-300"
-              style="width: ${progress}%">
-            </div>
-          </div>
-        </div>
-
+    <div class="space-y-2 px-4">
+      <div class="flex justify-between items-center text-sm">
+        <span class="text-slate-600">Progress</span>
+        <span class="text-slate-900 font-semibold">${progress}%</span>
       </div>
-
-      <button
-        id="cancelBtn"
-        class="w-full bg-white hover:bg-slate-50 text-slate-700 font-medium py-3 px-6 rounded-xl border border-slate-200"
-      >
-        Cancel Scan
-      </button>
-
+      <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+        <div 
+          class="bg-gradient-to-r from-blue-500 to-blue-600 h-full rounded-full transition-all duration-300" 
+          style="width: ${progress}%">
+        </div>
+      </div>
     </div>
-  `;
+  </div>
+
+  <button
+    id="cancelBtn"
+    class="w-full bg-white hover:bg-slate-50 text-red-500 font-medium py-3 px-6 rounded-xl border border-slate-200"
+  >
+    Cancel Scan
+  </button>
+</div>`;
 
   document.getElementById("cancelBtn")
     .addEventListener("click", async () => {
       await browser.runtime.sendMessage({ action: "CANCEL_JOB" });
+      cleanup();
+      renderCancelled();
     });
 }
 
-
-function renderRunButton(statusText = "", lastChecked = null) {
+function renderRunButton() {
   const content = document.getElementById("content");
 
   content.innerHTML = `
     <div class="flex flex-col items-center gap-6">
-
       <div class="w-full bg-white rounded-xl p-6 shadow-sm text-center">
-
         <div class="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-full mb-4">
           <span class="text-slate-600 text-2xl">📈</span>
         </div>
 
         <h2 class="text-slate-900 font-semibold text-lg mb-2">
-          Ready to Audit
+          Ready to Scan
         </h2>
 
         <p class="text-slate-600 text-sm mb-4">
           Analyze your Instagram account to find users who don't follow you back
         </p>
-
-        ${lastChecked ? `
-          <div class="text-xs text-slate-500 bg-slate-50 rounded-lg py-2 px-3">
-            Last checked: ${lastChecked}
-          </div>
-        ` : ""}
-
       </div>
 
       <button
         id="runCheck"
         class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-4 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
       >
-        Start Audit
+        Start Scan
       </button>
-
     </div>
-  `;
-
-  document.getElementById("runCheck")
-    .addEventListener("click", startCheck);
-}
-
-function renderDifferentProfile(loginCheck) {
-  const content = document.getElementById("content");
-  content.innerHTML = `
-    <p>You are logged in as <strong>${loginCheck.loggedInUsername}</strong>.</p>
-    <p>Viewing profile: <strong>${loginCheck.profileUsername}</strong></p>
-    <button id="runCheck">Find Non-Followers</button>
   `;
 
   document.getElementById("runCheck")
@@ -225,27 +213,27 @@ function renderCancelled() {
   const content = document.getElementById("content");
 
   content.innerHTML = `
-    <div class="flex flex-col items-center gap-6">
-
-      <div class="w-full bg-white rounded-xl p-6 shadow-sm text-center">
-
-        <div class="inline-flex items-center justify-center w-14 h-14 bg-orange-100 rounded-full mb-3">
-          <div class="w-7 h-7 bg-orange-500 rounded-full"></div>
+      <div class="flex flex-col items-center justify-center gap-6 py-8 px-4 max-w-sm w-full bg-white rounded-2xl shadow-sm border border-slate-100">
+        
+        <div class="inline-flex items-center justify-center w-16 h-16 bg-amber-100 rounded-full">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-600">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
         </div>
 
-        <div class="inline-block bg-orange-500 text-white font-bold text-sm px-4 py-2 rounded-lg">
-          Scan Cancelled
+        <div class="text-center">
+            <h2 class="text-slate-900 font-semibold text-lg mb-2">Scan Cancelled</h2>
+            <p class="text-slate-600 text-sm">
+                Scan has been stopped. You can start a new one anytime.
+            </p>
         </div>
 
-      </div>
-
-      <button
-        id="restartBtn"
-        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-4 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
-      >
-        Start New Audit
-      </button>
-
+        <button
+            id="restartBtn"
+            class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-3 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
+        >
+            Start New Scan
+        </button>
     </div>
   `;
 
@@ -253,44 +241,88 @@ function renderCancelled() {
     .addEventListener("click", startCheck);
 }
 
-function renderResults(users) {
+function renderResults(result) {
+
   const content = document.getElementById("content");
 
-  content.innerHTML = `
-    <div class="flex flex-col gap-4">
-
-      <div class="bg-white rounded-xl p-6 shadow-sm text-center">
-        <h2 class="text-slate-600 font-medium text-xs uppercase tracking-wide mb-4">
-          The Verdict
-        </h2>
-
-        <div class="text-6xl font-black text-slate-900 mb-2">
-          ${users.length}
-        </div>
-
-        <div class="text-slate-700 text-base font-semibold">
-          people are<br/>leaving you<br/>hanging
-        </div>
+  // 🛑 Safety guard
+  if (!result || typeof result !== "object") {
+    content.innerHTML = `
+      <div class="text-center p-6 text-red-600">
+        Unexpected error occurred.
       </div>
+    `;
+    return;
+  }
 
-      <button
-        id="runAgain"
-        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-3 px-6 rounded-xl"
-      >
-        Run New Scan
-      </button>
+  // ❌ Error state
+  if (!result.success) {
+    console.log()
+    content.innerHTML = `
+      <div class="flex flex-col gap-4">
+        <div class="bg-white rounded-xl p-6 shadow-sm text-center">
+          <h2 class="text-red-500 font-semibold text-lg mb-2">
+            Scan Failed
+          </h2>
+          <p class="text-slate-600 text-sm">
+            ${result.error || "Something went wrong."}
+          </p>
+        </div>
 
-      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <button
+          id="runAgain"
+          class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-3 px-6 rounded-xl"
+        >
+          Try Again
+        </button>
+      </div>
+    `;
+
+    document.getElementById("runAgain")
+      ?.addEventListener("click", startCheck);
+
+    return;
+  }
+
+  // ✅ Success state
+  const users = result.dontFollowMeBack || [];
+  const count = users.length;
+
+content.innerHTML = `
+<div class="flex flex-col items-center justify-center gap-6 py-8">
+  <div class="text-7xl font-black text-slate-900">
+    ${count}
+  </div>
+
+  <div class="text-center">
+    <h2 class="text-slate-900 font-semibold text-lg mb-2">
+      ${count === 0 
+        ? "Everyone follows you back 🎉" 
+        : (count === 1 ? '1 Person is' : 'People are') + " leaving you hanging"}
+    </h2>
+    <p class="text-slate-600 text-sm">
+      ${count === 0 
+        ? "Your follower list is perfectly in sync." 
+        : "These users don't follow you back"}
+    </p>
+  </div>
+
+  <button
+    id="runAgain"
+    class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-3 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
+  >
+    Run New Scan
+  </button>
+  
+        <div class="w-full bg-white rounded-xl shadow-sm overflow-hidden">
         <div class="px-5 py-3 bg-slate-50 border-b border-slate-200">
           <h3 class="text-slate-700 font-medium text-sm">
             Non-Followers List
           </h3>
         </div>
         <div id="userList" class="max-h-[220px] overflow-y-auto"></div>
-      </div>
-
-    </div>
-  `;
+      </div> 
+</div>`;
 
   const userList = document.getElementById("userList");
 
@@ -326,9 +358,8 @@ function renderResults(users) {
 
     userList.appendChild(row);
   });
-
   document.getElementById("runAgain")
-    .addEventListener("click", startCheck);
+    ?.addEventListener("click", startCheck);
 }
 
 function renderError(error) {
@@ -363,4 +394,9 @@ async function getActiveInstagramProfileTab() {
   if (pathParts.length !== 1) return null;
 
   return tab;
+}
+
+function renderMessageBox(message) {
+  const content = document.getElementById("content");
+  content.innerHTML = `<p>${message}</p>`;
 }

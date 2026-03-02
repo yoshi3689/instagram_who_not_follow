@@ -1,43 +1,66 @@
-// Put all the javascript code here, that you want to execute in background.
-
 console.log("BACKGROUND LOADED");
 
 let currentJob = {
-  status: "idle", // idle | running | done | error'
+  status: "idle", // idle | running | done | error | cancelled
   progress: 0,
   result: null,
   error: null,
   timestamp: null
 };
 
+
+/* ===============================
+   🔥 NEW: Broadcast helper
+================================= */
+async function broadcastStatus() {
+  try {
+    await browser.runtime.sendMessage({
+      action: "STATUS_UPDATE",
+      payload: currentJob
+    });
+  } catch (e) {
+    // popup might be closed — that's fine
+  }
+}
+
+/* ===============================
+   📩 MESSAGE LISTENER
+================================= */
+
 browser.runtime.onMessage.addListener(async (request, sender) => {
 
-  console.log("Background received:", request);
+  console.log("Background received:", request, currentJob);
 
-  // 🔐 NEW: Check login status
+  /* ===============================
+     🔐 CHECK LOGIN
+  ================================= */
+
   if (request.action === "CHECK_LOGIN") {
 
-  const tabId = sender.tab?.id;
+    const tabId = sender.tab?.id;
 
     if (!tabId) {
-    console.log("tab id not found, so not logged in");
-    return { loggedIn: false };
-  }
+      return { loggedIn: false };
+    }
 
     try {
-    console.log("about to check login status");
-    const response = await browser.tabs.sendMessage(tabId, {
-      action: "CHECK_LOGIN"
-    });
+      const response = await browser.tabs.sendMessage(tabId, {
+        action: "CHECK_LOGIN"
+      });
 
-    return response || { loggedIn: false };
+      return response || { loggedIn: false };
 
-  } catch (err) {
-    return { loggedIn: false };
+    } catch {
+      return { loggedIn: false };
+    }
   }
-  }
+
+  /* ===============================
+     ❌ CANCEL JOB
+  ================================= */
 
 if (request.action === "CANCEL_JOB") {
+
   try {
     const [tab] = await browser.tabs.query({
       active: true,
@@ -45,17 +68,23 @@ if (request.action === "CANCEL_JOB") {
     });
 
     if (!tab?.id) {
-      console.log("No active tab found for cancel.");
       return { success: false };
     }
 
-    const response = await browser.tabs.sendMessage(tab.id, {
+    await browser.tabs.sendMessage(tab.id, {
       action: "CANCEL_JOB"
     });
+
+    // ✅ Reset job state
     currentJob.status = "cancelled";
     currentJob.progress = 0;
 
-    return response || { success: true };
+    // ✅ Clear badge
+    browser.browserAction.setBadgeText({ text: "0%" });
+
+    await broadcastStatus();
+
+    return { success: true };
 
   } catch (err) {
     console.error("Cancel failed:", err);
@@ -63,26 +92,38 @@ if (request.action === "CANCEL_JOB") {
   }
 }
 
+  /* ===============================
+     📊 GET STATUS
+  ================================= */
 
-  // 🔎 Get job status
   if (request.action === "GET_STATUS") {
     return currentJob;
   }
 
-  // ▶ Start job
-  if (request.action === "START_CHECK") {
+  /* ===============================
+     ▶ START CHECK
+  ================================= */
 
-    if (currentJob.status === "running") {
-      return { status: "already_running" };
-    }
+if (request.action === "START_CHECK") {
 
-    currentJob = {
-      status: "running",
-      result: null,
-      error: null,
-      timestamp: Date.now()
-    };
+  if (currentJob.status === "running") {
+    return { status: "already_running" };
+  }
 
+  // 1️⃣ Update state immediately
+  currentJob = {
+    status: "running",
+    progress: 0,
+    result: null,
+    error: null,
+    timestamp: Date.now()
+  };
+
+  // 2️⃣ Broadcast immediately
+  broadcastStatus(); // 🔥 removed await
+
+  // 3️⃣ Start job asynchronously (do NOT await)
+  (async () => {
     try {
       const tabs = await browser.tabs.query({
         active: true,
@@ -93,47 +134,70 @@ if (request.action === "CANCEL_JOB") {
         throw new Error("No active tab found");
       }
 
-      const activeTab = tabs[0];
-      browser.tabs.sendMessage(activeTab.id, {
-  action: "RUN_CHECK"
-});
+      await browser.tabs.sendMessage(tabs[0].id, {
+        action: "RUN_CHECK"
+      });
+
     } catch (err) {
-      console.log("Background error:", err);
       currentJob.status = "error";
       currentJob.error = err.toString();
+      broadcastStatus();
     }
+  })();
 
-    return { status: "started" };
-  }
+  // 4️⃣ Return immediately
+  return { status: "started" };
+}
+
+  /* ===============================
+     📈 JOB PROGRESS
+  ================================= */
 
   if (request.action === "JOB_PROGRESS") {
-    currentJob.progress = request.progress;
-    browser.browserAction.setBadgeBackgroundColor({
-  color: "#4caf50"
-});
-        browser.browserAction.setBadgeText({
-  text: currentJob.progress + "%"
-});
-  return;
-}
 
-if (request.action === "JOB_DONE") {
-  currentJob.status = "done";
-  currentJob.result = request.result;
-  currentJob.progress = 100;
-  currentJob.timestamp = Date.now();
-  browser.notifications.create("scan-results", {
-    type: "basic",
-    iconUrl: browser.runtime.getURL("icons/icon-128.svg"),
-    title: "Scan Complete! 🔍",
-    message: `We found ${request.result.dontFollowMeBack.length} not folloiwng you back.\n 
-    Check our extension to see who they are`,
-    priority: 2
-  });
-  browser.browserAction.setBadgeText({ text: "✓" });
-  await browser.storage.local.set({
-    finalResult: request.result
-  })
-  return;
-}
+    currentJob.progress = request.progress;
+
+    browser.browserAction.setBadgeBackgroundColor({
+      color: "#4caf50"
+    });
+
+    browser.browserAction.setBadgeText({
+      text: currentJob.progress + "%"
+    });
+
+    await broadcastStatus(); // 🔥 NEW
+
+    return;
+  }
+
+  /* ===============================
+     ✅ JOB DONE
+  ================================= */
+
+  if (request.action === "JOB_DONE") {
+
+    currentJob.status = "done";
+    currentJob.result = request.result;
+    currentJob.progress = 100;
+    currentJob.timestamp = Date.now();
+
+    browser.notifications.create("scan-results", {
+      type: "basic",
+      iconUrl: browser.runtime.getURL("icons/icon-128.svg"),
+      title: "Scan Complete! 🔍",
+      message: `Check the extension for details`,
+      priority: 2
+    });
+
+    browser.browserAction.setBadgeText({ text: "✓" });
+
+    await browser.storage.local.set({
+      finalResult: request.result
+    });
+
+    await broadcastStatus(); // 🔥 NEW
+
+    return;
+  }
+
 });

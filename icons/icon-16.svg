@@ -1,27 +1,33 @@
-<svg viewBox="0 0 16 16"
+<svg width="16" height="16" viewBox="0 0 16 16"
   xmlns="http://www.w3.org/2000/svg">
+
   <defs>
-    <linearGradient id="bgGradient16" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#3730a3;stop-opacity:1" />
+    <linearGradient id="orange16" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E65100"/>
+      <stop offset="100%" stop-color="#FF8F00"/>
     </linearGradient>
   </defs>
 
-  <!-- Squircle background -->
-  <path d="M 2.5 1 Q 1 1 1 2.5 L 1 13.5 Q 1 15 2.5 15 L 13.5 15 Q 15 15 15 13.5 L 15 2.5 Q 15 1 13.5 1 Z" fill="url(#bgGradient16)"/>
+  <!-- Centered and optically balanced for 16px -->
+  <g transform="translate(8,8) scale(0.95)" fill="url(#orange16)">
 
-  <!-- User silhouette -->
-  <g transform="translate(8, 8)">
-    <!-- Head circle -->
-    <circle cx="0" cy="-1.5" r="1" fill="white" opacity="0.95"/>
+    <!-- Head -->
+    <circle cx="0" cy="-5" r="3.2" />
 
-    <!-- Body/shoulders -->
-    <path d="M -1.2 -0.2 Q -1.2 0.8 -0.2 1.2 L 0.2 1.2 Q 1.2 0.8 1.2 -0.2 Z" fill="white" opacity="0.95"/>
+    <!-- Body (extended close to bottom edge) -->
+    <path d="M -7 2
+             Q -7 -1 0 -1
+             T 7 2
+             L 7 7
+             L -7 7
+             Z" />
 
-    <!-- Magnifying glass overlay -->
-    <g transform="translate(0.7, -0.5)">
-      <circle cx="0" cy="0" r="0.7" fill="none" stroke="white" stroke-width="0.15" opacity="0.9"/>
-      <line x1="0.5" y1="0.5" x2="1.1" y2="1.1" stroke="white" stroke-width="0.15" opacity="0.9" stroke-linecap="round"/>
+    <!-- Simplified Magnifier (thicker for clarity at 16px) -->
+    <g transform="translate(4,-3)">
+      <circle cx="0" cy="0" r="2.5"/>
+      <rect x="2" y="2" width="4" height="1.8" rx="0.8" transform="rotate(45 2 2)" />
     </g>
+
   </g>
+
 </svg>
