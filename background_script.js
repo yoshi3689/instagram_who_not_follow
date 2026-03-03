@@ -8,7 +8,23 @@ let currentJob = {
   timestamp: null,
   tabId: null
 };
+//TODO: maybe refactor cancel, reset states to reduce duplicate code. 
+// TODO: discuss how to make everything clean in this extension 
 
+function resetExtensionState() {
+  console.log("Resetting background state");
+
+  currentJob = {
+  status: "idle", // idle | running | done | error | cancelled
+  progress: 0,
+  result: null,
+  error: null,
+  timestamp: null,
+  tabId: null
+  }
+      // ✅ Clear badge
+    browser.browserAction.setBadgeText({ text: "" });
+}
 
 /* ===============================
    🔥 NEW: Broadcast helper
@@ -181,5 +197,12 @@ if (request.action === "CANCEL_JOB") {
 
     return;
   }
+
+  if (request.action === "RESET") {
+    console.log("reset")
+    resetExtensionState();
+    await broadcastStatus(); // 🔥 NEW
+    return;
+}
 
 });

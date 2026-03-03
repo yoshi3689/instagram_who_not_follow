@@ -299,7 +299,7 @@ content.innerHTML = `
     <h2 class="text-slate-900 font-semibold text-lg mb-2">
       ${count === 0 
         ? "Your follower list is perfectly in sync." 
-        : "These users don't follow you back"}
+        : "users don't follow you back"}
     </h2>
   </div>
 

@@ -2,7 +2,7 @@
 	"manifest_version": 2,
 	"name": "InstagramWhoFollows",
 	"description": "Check who follows/not follow on instagram ",
-	"version": "0.0.0",
+	"version": "1.0.0",
   "permissions": [
     "activeTab", "notifications"
   ],
