@@ -1,7 +1,6 @@
 // Put all the javascript code here, that you want to execute after page load.
 
 let urls = null;
-let isCancelled = false;
 let currentAbortController = null;
 let progressUIContainer = null;
 
@@ -11,15 +10,12 @@ function cleanupExtensionUI() {
     progressUIContainer = null;
   }
 
-  isCancelled = true;
-
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
   }
-    // 🔥 Notify background to reset its state
   chrome.runtime.sendMessage({
-    action: "RESET"
+    action: "CANCEL_JOB"
   });
 }
 
@@ -179,11 +175,6 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
   let fetched = 0;
 
 while (hasNext) {
-
-  if (isCancelled) {
-    throw new Error("JOB_CANCELLED");
-  }
-
   // 🧠 Small natural delay before request
   await sleep(randomBetween(200, 600));
 
@@ -200,7 +191,7 @@ while (hasNext) {
       })),
     { signal: currentAbortController.signal }
   );
-
+  
   const json = await res.json();
 
   const container =
@@ -365,12 +356,7 @@ async function findNonFollowers(username) {
 browser.runtime.onMessage.addListener(async (request) => {
 
   if (request.action === "CANCEL_JOB") {
-    isCancelled = true;
-
-    if (currentAbortController) {
-      currentAbortController.abort();
-    }
-
+    if (currentAbortController) currentAbortController.abort();
     return;
   }
 
@@ -420,16 +406,10 @@ browser.runtime.onMessage.addListener(async (request) => {
   }
 
   if (request.action === "RUN_CHECK") {
-
-    isCancelled = false;
-
     try {
-      const username =
-        window.location.pathname.split("/").filter(Boolean)[0];
-
+      const username
+        = window.location.pathname.split("/").filter(Boolean)[0];
       const result = await findNonFollowers(username);
-
-      if (isCancelled) return;
 
       // Send result to background
       await browser.runtime.sendMessage({
@@ -478,7 +458,6 @@ window.addEventListener('popstate', () => {
 });
 
 window.addEventListener('locationchange', () => {
-  console.log("Detected navigation → cleaning up");
   cleanupExtensionUI();
 });
 

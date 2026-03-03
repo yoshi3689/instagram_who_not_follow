@@ -4,7 +4,6 @@ window.addEventListener("unload", cleanup);
 let pollingInterval = null;
 
 async function init() {
-  console.log("POPUP LOADED");
 
   try {
     const tab = await getActiveInstagramProfileTab();
@@ -92,7 +91,6 @@ function pollUntilDone() {
     const status = await browser.runtime.sendMessage({
       action: "GET_STATUS"
     });
-    console.log("get stuatus")
 
     if (!status) return;
 
@@ -258,7 +256,6 @@ function renderResults(result) {
 
   // ❌ Error state
   if (!result.success) {
-    console.log()
     content.innerHTML = `
       <div class="flex flex-col gap-4">
         <div class="bg-white rounded-xl p-6 shadow-sm text-center">

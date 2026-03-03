@@ -1,34 +1,29 @@
-console.log("BACKGROUND LOADED");
+// ========================================
+// 🧠 GLOBAL JOB STATE (BACKGROUND ONLY)
+// ========================================
+// This is the single source of truth for the scan lifecycle.
+// Popup reads from this.
+// Content script only reports progress.
+// Background owns and controls it.
 
-let currentJob = {
-  status: "idle", // idle | running | done | error | cancelled
-  progress: 0,
-  result: null,
-  error: null,
-  timestamp: null,
-  tabId: null
-};
-//TODO: maybe refactor cancel, reset states to reduce duplicate code. 
-// TODO: discuss how to make everything clean in this extension 
+let currentJob = getInitialState()
 
-function resetExtensionState() {
-  console.log("Resetting background state");
-
-  currentJob = {
-  status: "idle", // idle | running | done | error | cancelled
-  progress: 0,
-  result: null,
-  error: null,
-  timestamp: null,
-  tabId: null
+function getInitialState() {
+  return {
+    status: "idle",      // idle | running | done | error | cancelled
+    progress: 0,         // 0–100
+    result: null,        // final scan result
+    error: null,         // error message if failed
+    timestamp: null,     // completion time
+    tabId: null          // tab currently running the scan
   }
-      // ✅ Clear badge
-    browser.browserAction.setBadgeText({ text: "" });
 }
 
 /* ===============================
-   🔥 NEW: Broadcast helper
+   🔄 Broadcast state to popup
 ================================= */
+// Sends the latest job state to any open popup.
+// If popup is closed, this safely fails silently.
 async function broadcastStatus() {
   try {
     await browser.runtime.sendMessage({
@@ -36,21 +31,26 @@ async function broadcastStatus() {
       payload: currentJob
     });
   } catch (e) {
-    // popup might be closed — that's fine
+    // Popup might not be open — that's fine.
   }
 }
 
 /* ===============================
-   📩 MESSAGE LISTENER
+   📩 MESSAGE LISTENER (Background)
 ================================= */
+// Background acts as:
+// - State manager
+// - Job controller
+// - Router between popup and content script
 
 browser.runtime.onMessage.addListener(async (request, sender) => {
-
-  console.log("Background received:", request, currentJob);
 
   /* ===============================
      🔐 CHECK LOGIN
   ================================= */
+  // Popup asks background.
+  // Background forwards the request to the active tab.
+  // Content script performs actual DOM check.
 
   if (request.action === "CHECK_LOGIN") {
 
@@ -75,41 +75,43 @@ browser.runtime.onMessage.addListener(async (request, sender) => {
   /* ===============================
      ❌ CANCEL JOB
   ================================= */
+  // Popup → Background → Content Script
+  // Background also resets its own state.
 
-if (request.action === "CANCEL_JOB") {
-  try {
-    // 🔥 Minimal Change: Use the ID we already have in our state
+  if (request.action === "CANCEL_JOB") {
 
     if (!currentJob.tabId) {
       return { success: false, error: "No active job tab found" };
     }
 
-    // Send the message directly to the specific tab running the scan
-    await browser.tabs.sendMessage(currentJob.tabId, {
-      action: "CANCEL_JOB"
-    });
+    try {
+      // Tell content script to stop scanning
+      await browser.tabs.sendMessage(currentJob.tabId, {
+        action: "CANCEL_JOB"
+      });
 
-    // ✅ Reset job state
-    currentJob.status = "cancelled";
-    currentJob.progress = 0;
-    currentJob.tabId = null; // Clear the reference
+      // Reset internal state
+      currentJob = getInitialState();
+      currentJob.status = "cancelled";
 
-    // ✅ Clear badge
-    browser.browserAction.setBadgeText({ text: "" });
+      // Clear badge
+      browser.browserAction.setBadgeText({ text: "" });
 
-    await broadcastStatus();
+      // Notify popup
+      await broadcastStatus();
 
-    return { success: true };
+      return { success: true };
 
-  } catch (err) {
-    console.error("Cancel failed:", err);
-    return { success: false };
+    } catch (err) {
+      console.error("Cancel failed:", err);
+      return { success: false };
+    }
   }
-}
 
   /* ===============================
      📊 GET STATUS
   ================================= */
+  // Popup uses this when opened to sync UI with background state.
 
   if (request.action === "GET_STATUS") {
     return currentJob;
@@ -118,47 +120,57 @@ if (request.action === "CANCEL_JOB") {
   /* ===============================
      ▶ START CHECK
   ================================= */
+  // Popup → Background
+  // Background validates state
+  // Background tells specific tab to start scanning
 
   if (request.action === "START_CHECK") {
-  console.log(request, currentJob)
-  
 
-  // ✅ The Popup will send the tabId in the request
-    const targetTabId = request.tabId; 
-      if (currentJob.status === "running") {
-    console.log("already running")
-    return Promise.resolve({ status: "already_running" });
-  }
+    // Prevent duplicate jobs
+    if (currentJob && currentJob.status === "running") {
+      return Promise.resolve({ status: "already_running" });
+    }
+
+    const targetTabId = request.tabId;
 
     if (!targetTabId) {
-    console.log("no tab Id exists")
-    return Promise.resolve({ status: "error", message: "No Tab ID provided" });
+      return Promise.resolve({
+        status: "error",
+        message: "No Tab ID provided"
+      });
+    }
+
+    // Initialize new job
+    currentJob = {
+      status: "running",
+      progress: 0,
+      result: null,
+      error: null,
+      timestamp: null,
+      tabId: targetTabId
+    };
+
+    await broadcastStatus();
+
+    // Tell content script to begin
+    browser.tabs.sendMessage(targetTabId, {
+      action: "RUN_CHECK"
+    });
+
+    return Promise.resolve({ status: "started" });
   }
-
-  // Update our persistent state
-  currentJob = {
-    status: "running",
-    progress: 0,
-    result: null,
-    tabId: targetTabId // 🔒 Now locked in our "Source of Truth"
-  };
-
-  broadcastStatus();
-
-  // Tell the specific tab to start working
-  browser.tabs.sendMessage(targetTabId, { action: "RUN_CHECK" });
-
-  return Promise.resolve({ status: "started" });
-}
 
   /* ===============================
      📈 JOB PROGRESS
   ================================= */
+  // Content Script → Background
+  // Background updates state and badge.
 
   if (request.action === "JOB_PROGRESS") {
 
     currentJob.progress = request.progress;
 
+    // Visual badge feedback
     browser.browserAction.setBadgeBackgroundColor({
       color: "#4caf50"
     });
@@ -167,7 +179,7 @@ if (request.action === "CANCEL_JOB") {
       text: currentJob.progress + "%"
     });
 
-    await broadcastStatus(); // 🔥 NEW
+    await broadcastStatus();
 
     return;
   }
@@ -175,14 +187,23 @@ if (request.action === "CANCEL_JOB") {
   /* ===============================
      ✅ JOB DONE
   ================================= */
+  // Content Script → Background
+  // Finalizes state and triggers notification.
 
   if (request.action === "JOB_DONE") {
+
+    // Safety guard:
+    // Ignore if job was already cancelled or replaced
+    if (!currentJob || currentJob.status !== "running") {
+      return;
+    }
 
     currentJob.status = "done";
     currentJob.result = request.result;
     currentJob.progress = 100;
     currentJob.timestamp = Date.now();
 
+    // User notification
     browser.notifications.create("scan-results", {
       type: "basic",
       iconUrl: browser.runtime.getURL("icons/icon-128.svg"),
@@ -191,18 +212,12 @@ if (request.action === "CANCEL_JOB") {
       priority: 2
     });
 
+    // Badge shows completion
     browser.browserAction.setBadgeText({ text: "✓" });
 
-    await broadcastStatus(); // 🔥 NEW
+    await broadcastStatus();
 
     return;
   }
-
-  if (request.action === "RESET") {
-    console.log("reset")
-    resetExtensionState();
-    await broadcastStatus(); // 🔥 NEW
-    return;
-}
 
 });
