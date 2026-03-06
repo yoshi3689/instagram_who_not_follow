@@ -1,12 +1,62 @@
+/* ---------------------------------------------------------
+   POPUP SCRIPT ENTRYPOINT
+   ---------------------------------------------------------
+   This script runs inside the extension popup and controls
+   all popup UI rendering and user interaction. Popup does NOT perform Instagram scraping.
+   All scraping happens in the content_script.js.
+
+   Responsibilities:
+   - Validate environment (Instagram profile page + login)
+   - Start a scan job
+   - Poll background script for job status
+   - Render UI depending on the job state
+
+   Communication flow:
+
+   Popup (script.js)
+        │
+        │ browser.runtime.sendMessage
+        ▼
+   Background script (job state manager)
+        │
+        │ browser.tabs.sendMessage
+        ▼
+   Content script (Instagram scraping)
+
+--------------------------------------------------------- */
+
 document.addEventListener("DOMContentLoaded", init);
 window.addEventListener("unload", cleanup);
 
 let pollingInterval = null;
 
-/* ------------------------ */
-/* HELPERS */
-/* ------------------------ */
 
+/* ---------------------------------------------------------
+   TAB VALIDATION
+   ---------------------------------------------------------
+   Ensures the extension is being used on a valid
+   Instagram profile page.
+
+   Valid URL format:
+   https://www.instagram.com/{username}/
+
+   Invalid examples:
+   /explore
+   /p/
+   /reels
+--------------------------------------------------------- */
+
+/**
+ * Returns the active tab only if it is an Instagram profile page.
+ *
+ * Called from:
+ * - init()
+ *
+ * Uses:
+ * - browser.tabs.query()
+ *
+ * @returns {Promise<Tab|null>}
+ */
 async function getActiveInstagramProfileTab() {
   const tabs = await browser.tabs.query({
     active: true,
@@ -26,18 +76,45 @@ async function getActiveInstagramProfileTab() {
   return tab;
 }
 
-/* ------------------------ */
-/* INIT */
-/* ------------------------ */
 
+/* ---------------------------------------------------------
+   INITIALIZATION
+   ---------------------------------------------------------
+   Runs when popup opens.
+
+   Flow:
+   1. Validate active tab
+   2. Ask content script if user is logged into Instagram
+   3. Ask background script for current job status
+   4. Render appropriate UI
+--------------------------------------------------------- */
+
+/**
+ * Main popup initialization.
+ *
+ * Called from:
+ * - DOMContentLoaded
+ *
+ * Communicates with:
+ * - Content script (CHECK_LOGIN)
+ * - Background script (GET_STATUS)
+ */
 async function init() {
 
   try {
     const tab = await getActiveInstagramProfileTab();
+
     if (!tab) {
       renderMessageBox("This extension only works on Instagram profile pages.");
       return;
     }
+
+    /* ---------------------------------------------------------
+       LOGIN CHECK
+       ---------------------------------------------------------
+       The popup asks the content script whether the user
+       is currently logged into Instagram.
+    --------------------------------------------------------- */
 
     const loginCheck = await browser.tabs.sendMessage(tab.id, {
       action: "CHECK_LOGIN"
@@ -55,10 +132,12 @@ async function init() {
       return;
     }
 
-    // if (loggedInUsername !== profileUsername) {
-    //   renderMessageBox("Please go to your profile page.");
-    //   return;
-    // }
+    /* ---------------------------------------------------------
+       JOB STATUS SYNC
+       ---------------------------------------------------------
+       Ask the background script whether a scan job
+       is already running, finished, or idle.
+    --------------------------------------------------------- */
 
     await handleStatus(tab.id);
 
@@ -68,16 +147,39 @@ async function init() {
   }
 }
 
-/* ------------------------ */
-/* STATUS HANDLING */
-/* ------------------------ */
 
+/* ---------------------------------------------------------
+   JOB STATUS HANDLING
+   ---------------------------------------------------------
+   The background script holds the authoritative job state.
+
+   Possible states:
+
+   idle
+   running
+   done
+   error
+   cancelled
+
+   Based on this state the popup renders the appropriate UI.
+--------------------------------------------------------- */
+
+/**
+ * Requests job status from the background script and
+ * renders the appropriate UI.
+ *
+ * Called from:
+ * - init()
+ *
+ * Communicates with:
+ * - background.js (GET_STATUS)
+ */
 async function handleStatus(tabId) {
   const res = await browser.runtime.sendMessage({
     action: "GET_STATUS",
     tabId
   });
-  // console.log(res)
+
   if (!res?.ok) {
     renderError(res?.error || "Failed to get data.");
     return;
@@ -103,24 +205,49 @@ async function handleStatus(tabId) {
   }
 }
 
-/* ------------------------ */
-/* ACTIONS */
-/* ------------------------ */
 
+/* ---------------------------------------------------------
+   USER ACTIONS
+   ---------------------------------------------------------
+   Functions triggered by user interaction in the popup.
+--------------------------------------------------------- */
+
+/**
+ * Starts a new scan job.
+ *
+ * Flow:
+ * 1. Ask background script to start scan
+ * 2. Render progress UI immediately
+ * 3. Begin polling background for updates
+ *
+ * Communicates with:
+ * - background.js (START_CHECK)
+ */
 async function startCheck() {
   const tab = await getActiveInstagramProfileTab();
   if (!tab) return;
+
   browser.runtime.sendMessage({
     action: "START_CHECK",
     tabId: tab.id
   });
-  
+
   renderProgress();
-  
   pollUntilDone(tab.id);
 }
 
+
+/**
+ * Polls the background script until the scan finishes.
+ *
+ * This allows the popup to be closed and reopened while
+ * the scan continues in the background.
+ *
+ * Communicates with:
+ * - background.js (GET_STATUS)
+ */
 function pollUntilDone(tabId) {
+
   if (pollingInterval) return;
 
   pollingInterval = setInterval(async () => {
@@ -129,7 +256,6 @@ function pollUntilDone(tabId) {
       action: "GET_STATUS",
       tabId
     });
-    console.log(data)
 
     if (data.status === "running") {
       renderProgress(data.progress || 0);
@@ -148,6 +274,10 @@ function pollUntilDone(tabId) {
   }, 500);
 }
 
+
+/**
+ * Stops polling when the popup closes or job finishes.
+ */
 function cleanup() {
   if (pollingInterval) {
     clearInterval(pollingInterval);
@@ -155,10 +285,40 @@ function cleanup() {
   }
 }
 
-/* ------------------------ */
-/* UI RENDER FUNCTIONS */
-/* ------------------------ */
 
+/* ---------------------------------------------------------
+   UI RENDERING
+   ---------------------------------------------------------
+   These functions dynamically render popup content inside:
+
+   #content
+
+   The UI changes based on the scan state.
+--------------------------------------------------------- */
+
+
+/**
+ * Renders the UI shown while the scan job is running.
+ *
+ * Displays:
+ *  - loading spinner
+ *  - progress percentage
+ *  - progress bar
+ *  - cancel button
+ *
+ * The scan itself runs in the background script. This popup only
+ * reflects the current progress state sent via messaging.
+ *
+ * Interactions:
+ *  - Clicking "Cancel Scan" sends a CANCEL_JOB message to the
+ *    background script which aborts the running request.
+ *
+ * Called by:
+ *  - updateProgressUI()
+ *  - popup initialization when a job is already running
+ *
+ * @param {number} progress - Current progress percentage (0–100)
+ */
 function renderProgress(progress = 0) {
   const content = document.getElementById("content");
 
@@ -207,6 +367,21 @@ function renderProgress(progress = 0) {
     });
 }
 
+/**
+ * Renders the initial idle UI when no scan job is running.
+ *
+ * Displays:
+ *  - introduction message
+ *  - "Start Scan" button
+ *
+ * Interactions:
+ *  - Clicking "Start Scan" triggers startCheck()
+ *    which sends a START_JOB message to the background script.
+ *
+ * Called by:
+ *  - popup initialization
+ *  - after scan completes or resets
+ */
 function renderRunButton() {
   const content = document.getElementById("content");
 
@@ -239,6 +414,31 @@ function renderRunButton() {
     .addEventListener("click", startCheck);
 }
 
+/**
+ * Renders the error UI state.
+ *
+ * This function handles two related cases:
+ *
+ * 1. Scan cancelled by the user
+ * 2. Unexpected scan failure
+ *
+ * Depending on the status and error provided, the UI will show either
+ * a cancellation message or an error message.
+ *
+ * Displays:
+ *  - error or cancellation message
+ *  - button to start a new scan
+ *
+ * Interactions:
+ *  - Clicking "Start New Scan" triggers startCheck()
+ *
+ * Called by:
+ *  - updateProgressUI() when status === "cancelled"
+ *  - updateProgressUI() when status === "error"
+ *
+ * @param {Error|string|null} error - Error object or message
+ * @param {string} status - Current job status ("cancelled", "error", etc.)
+ */
 function renderError(error, status) {
   console.log(error, status)
   const content = document.getElementById("content");
@@ -283,7 +483,22 @@ function renderError(error, status) {
     .addEventListener("click", startCheck);
 }
 
-
+/**
+ * Renders the final scan results.
+ *
+ * Displays:
+ *  - total number of users who don't follow back
+ *  - scrollable list of those users
+ *  - links to open their Instagram profiles
+ *
+ * Each username links directly to the Instagram profile page.
+ *
+ * Called by:
+ *  - updateProgressUI() when status === "done"
+ *
+ * @param {Object} result - Scan results returned from the background script
+ * @param {Array} result.dontFollowMeBack - List of non-following users
+ */
 function renderResults(result) {
   const content = document.getElementById("content");
 
@@ -358,6 +573,14 @@ function renderResults(result) {
 
 }
 
+/**
+ * Renders a simple message box inside the popup.
+ *
+ * Used for displaying generic informational messages
+ * when no specific UI state is required.
+ *
+ * @param {string} message - Text message to display
+ */
 function renderMessageBox(message) {
   const content = document.getElementById("content");
   content.innerHTML = `<p>${message}</p>`;
@@ -365,38 +588,3 @@ function renderMessageBox(message) {
 
 
 
-function renderCancelled() {
-  const content = document.getElementById("content");
-
-  content.innerHTML = `
-    <div class="flex flex-col items-center justify-center gap-6 py-8 px-4 max-w-sm w-full bg-white rounded-2xl shadow-sm border border-slate-100">
-      <div class="inline-flex items-center justify-center w-16 h-16 bg-amber-100 rounded-full">
-        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"
-          viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          class="text-amber-600">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-      </div>
-
-      <div class="text-center">
-        <h2 class="text-slate-900 font-semibold text-lg mb-2">
-          Scan Cancelled
-        </h2>
-        <p class="text-slate-600 text-sm">
-          Scan has been stopped. You can start a new one anytime.
-        </p>
-      </div>
-
-      <button
-        id="restartBtn"
-        class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-3 px-6 rounded-xl transition-colors shadow-lg shadow-slate-800/20"
-      >
-        Start New Scan
-      </button>
-    </div>
-  `;
-
-  document.getElementById("restartBtn")
-    .addEventListener("click", startCheck);
-}

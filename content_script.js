@@ -1,11 +1,107 @@
+/* =========================================================
+   CONTENT SCRIPT — INSTAGRAM SCAN EXECUTION
+=========================================================
+
+This script runs directly inside Instagram pages and is
+responsible for performing the actual follower scan.
+
+Responsibilities of the content script:
+
+• Detect whether the user is logged in
+• Execute the follower / following scan
+• Interact with the Instagram DOM when necessary
+• Send progress updates to the background script
+• Return final scan results
+
+The content script DOES NOT manage global state.
+All scan lifecycle state is controlled by the
+background script.
+
+Architecture Overview
+
+Popup UI
+   │
+   │ START_CHECK / CANCEL_JOB
+   ▼
+Background Script (job state + coordination)
+   │
+   │ RUN_CHECK
+   ▼
+Content Script (this file)
+   │
+   ├─ performs scan
+   ├─ sends JOB_PROGRESS updates
+   └─ returns results when finished
+
+All communication happens through:
+    browser.runtime.sendMessage()
+    browser.runtime.onMessage
+
+This separation ensures that:
+
+• The scan continues even if the popup closes
+• Job state persists in the background script
+• The content script focuses only on page logic
+
+Security considerations:
+
+• No user data is transmitted externally
+• All processing happens locally in the browser
+• Only Instagram pages are accessed
+========================================================= */
+
 /* ---------------------------------------------------------
    GLOBAL STATE
---------------------------------------------------------- */
+---------------------------------------------------------
+
+These variables maintain runtime state for the content script
+while a scan is executing inside the Instagram page.
+
+Important:
+The content script does NOT maintain the authoritative job state.
+The background script controls the job lifecycle.
+
+The state here only supports:
+• scan execution
+• cancellation
+• UI injection on the Instagram page
+
+Variables
+
+urls
+  Dynamically imported endpoint definitions used to call
+  Instagram's internal APIs.
+
+isCancelled
+  Flag used to safely interrupt long-running scan loops.
+  This is checked before every request iteration.
+
+progressUIContainer
+  Reference to the floating progress UI injected into the
+  Instagram page during scanning.
+*/
 
 let urls = null;
 let isCancelled = false;
 let progressUIContainer = null;
 
+/* ---------------------------------------------------------
+   ERROR CONSTANTS
+---------------------------------------------------------
+
+Centralized error codes used throughout the scan logic.
+
+Each error code maps to a user-friendly message in
+ERROR_MESSAGES.
+
+This ensures:
+• consistent error reporting
+• predictable popup UI behavior
+• easier debugging
+
+Errors are propagated back to the background script through
+the final scan result.
+*/
 const ERRORS = {
   CANCELLED: "REQUEST_CANCELLED",
   NETWORK: "NETWORK_ERROR",
@@ -15,6 +111,7 @@ const ERRORS = {
   ACCOUNT_TOO_LARGE: "ACCOUNT_TOO_LARGE",
   UNKNOWN: "UNKNOWN_ERROR"
 };
+
 
 const ERROR_MESSAGES = {
   [ERRORS.CANCELLED]: "Scan cancelled",
@@ -28,7 +125,18 @@ const ERROR_MESSAGES = {
 
 /* ---------------------------------------------------------
    INIT URLS
---------------------------------------------------------- */
+---------------------------------------------------------
+
+Instagram endpoint definitions are loaded dynamically
+from urls.js.
+
+This avoids hardcoding endpoint values directly inside
+the content script and keeps the request configuration
+centralized.
+
+The import uses browser.runtime.getURL() so the file
+can be loaded from the extension package safely.
+*/
 
 (async () => {
   const src = browser.runtime.getURL("./urls.js");
@@ -37,16 +145,65 @@ const ERROR_MESSAGES = {
 
 /* ---------------------------------------------------------
    UTILITIES
---------------------------------------------------------- */
+---------------------------------------------------------
 
+Small helper utilities used throughout the scan logic.
+
+sleep()
+  Creates a delay between requests to avoid sending
+  too many requests too quickly.
+
+randomBetween()
+  Generates randomized delay values to make the request
+  pattern less aggressive.
+
+cleanupExtensionUI()
+  Removes the floating scan UI injected into the page.
+  This is triggered when:
+
+  • the scan finishes
+  • the scan is cancelled
+  • the user navigates to another page
+*/
+
+/**
+ * Creates a delay used between API requests.
+ *
+ * This helps avoid sending requests too quickly which
+ * could trigger Instagram rate limiting.
+ *
+ * @param {number} ms - Duration of the delay in milliseconds
+ * @returns {Promise<void>}
+ */
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Generates a random integer between min and max.
+ *
+ * Used to randomize request timing between API calls
+ * to avoid sending requests in a predictable pattern.
+ *
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
 function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+/**
+ * Removes the floating progress UI injected into the
+ * Instagram page.
+ *
+ * This is called when:
+ *  • the scan completes
+ *  • the scan is cancelled
+ *  • navigation occurs
+ *
+ * Prevents leftover UI elements remaining in the page DOM.
+ */
 function cleanupExtensionUI() {
     const root = document.getElementById("my-extension-root");
   if (root) {
@@ -54,12 +211,19 @@ function cleanupExtensionUI() {
   }
 }
 
-/* ---------------------------------------------------------
-   UI INJECTION
---------------------------------------------------------- */
-
-async function sendProgress(percent) {
-  const rounded = Math.round(percent);
+/**
+ * Reports scan progress to both:
+ *
+ * 1) the floating UI injected into the page
+ * 2) the background script (job state)
+ *
+ * This keeps the popup UI synchronized with the
+ * scan progress even if the popup is closed.
+ *
+ * @param {number}  - Current progress percentage
+ */
+async function sendProgress(progress) {
+  const rounded = Math.round(progress);
 
   injectExtensionUI({ progress: rounded });
 
@@ -69,11 +233,25 @@ async function sendProgress(percent) {
   });
 }
 
-/* ---------------------------------------------------------
-   FETCH USERS
---------------------------------------------------------- */
-
-async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
+/**
+ * Fetches all users from Instagram using the GraphQL API.
+ *
+ * Handles:
+ *  • pagination
+ *  • request pacing
+ *  • progress updates
+ *  • cancellation
+ *
+ * Used by findNonFollowers() to retrieve both
+ * followers and following lists.
+ *
+ * @param {string} userId
+ * @param {"followers"|"following"} type
+ * @param {number} progressStart
+ * @param {number} progressEnd
+ * @returns {Promise<Array>}
+ */
+async function fetchAllUsers(userId, type, progressStart, progressEnd) {
 
   let users = [];
   let after = null;
@@ -151,10 +329,23 @@ async function fetchAllUsers({ userId, type, progressStart, progressEnd }) {
   return users;
 }
 
-/* ---------------------------------------------------------
-   MAIN SCAN LOGIC
---------------------------------------------------------- */
-
+/**
+ * Main scan routine that identifies users who
+ * do not follow the current account back.
+ *
+ * Workflow:
+ *
+ * 1) Resolve the username to an Instagram user ID
+ * 2) Fetch the followers list
+ * 3) Fetch the following list
+ * 4) Compute the difference
+ *
+ * Returns a standardized success or error object
+ * consumed by the background script.
+ *
+ * @param {string} username
+ * @returns {Promise<{ok: boolean, data?: object, error?: object}>}
+ */
 async function findNonFollowers(username) {
 
   try {
@@ -221,31 +412,82 @@ async function findNonFollowers(username) {
 /* ---------------------------------------------------------
    MESSAGE LISTENER
 --------------------------------------------------------- */
+/*
+  This listener receives commands from the background script.
 
+  The background script acts as the central controller for the
+  extension and sends instructions to this content script
+  depending on the job state.
+
+  Supported actions:
+
+  CANCEL_JOB
+    → Stops any ongoing scan and removes injected UI.
+
+  CHECK_LOGIN
+    → Verifies whether the user is currently logged into Instagram.
+      Also extracts usernames relevant to the current page.
+
+  RUN_CHECK
+    → Starts the follower/following scan and returns results.
+
+  Communication Flow:
+
+  popup → background → content_script
+                       ↓
+                   DOM scanning
+                       ↓
+                 result returned
+                       ↓
+                background updates job state
+*/
 browser.runtime.onMessage.addListener(async (request) => {
+
   console.log(request)
+
+  // Reset cancellation flag for each new message
   isCancelled = false;
+
+  /* ---------------------------------------------------------
+     CANCEL JOB
+     Stops scan and removes UI overlay
+  --------------------------------------------------------- */
   if (request.action === "CANCEL_JOB") {
+
     isCancelled = true;
+
+    // Remove any injected progress UI from the page
     cleanupExtensionUI()
+
     return { ok: true };
   }
 
+
+  /* ---------------------------------------------------------
+     CHECK LOGIN
+     Determines whether the user is logged into Instagram
+     and extracts relevant usernames from the page
+  --------------------------------------------------------- */
   if (request.action === "CHECK_LOGIN") {
 
+    // Small delay to ensure page DOM is fully rendered
     await sleep(500);
 
+    // If Instagram redirected to login page, user is not logged in
     if (window.location.pathname.startsWith("/accounts/login")) {
       return { ok: true, data: { loggedIn: false } };
     }
 
+    // Instagram renders a Home icon when user is authenticated
     const homeIcon = document.querySelector('svg[aria-label="Home"]');
     const loggedIn = !!homeIcon;
 
+    // Username of the currently logged-in account
     const loggedInUsername =
       document.querySelector("nav a[href^='/']")?.getAttribute("href")
         ?.split("/")[1] || null;
 
+    // Username of the profile currently being viewed
     const profileUsername =
       window.location.pathname.split("/").filter(Boolean)[0] || null;
 
@@ -259,61 +501,131 @@ browser.runtime.onMessage.addListener(async (request) => {
     };
   }
 
+
+  /* ---------------------------------------------------------
+     RUN CHECK
+     Starts the follower comparison scan
+  --------------------------------------------------------- */
   if (request.action === "RUN_CHECK") {
 
+    // Determine profile username from URL
     const username =
       window.location.pathname.split("/").filter(Boolean)[0];
 
+    // Execute main scanning logic
     const result = await findNonFollowers(username);
 
+    // Notify background script that the job finished
     await browser.runtime.sendMessage({
       action: "JOB_DONE",
       result
     });
 
+    // If successful, show completion UI overlay
     if (result.ok) {
       injectExtensionUI({ status: "done" });
-    } 
+    }
 
     return result;
   }
 
+  // Unknown message fallback
   return { ok: false, error: "Unknown action" };
 });
 
 /* ---------------------------------------------------------
    SPA NAVIGATION HANDLING
 --------------------------------------------------------- */
+/*
+  Instagram is a Single Page Application (SPA).
 
+  Navigation between profiles does NOT trigger a full
+  page reload. Instead, the site updates the URL using
+  the History API (pushState / popState).
+
+  Because of this, extension UI injected into the DOM
+  could remain visible after navigating to a new profile.
+
+  The following logic listens for navigation events and
+  triggers cleanupExtensionUI() so the injected overlay
+  does not persist across pages.
+*/
+
+/*
+  Monkey-patch history.pushState so we can detect
+  internal SPA navigation events.
+*/
 (function(history){
   const pushState = history.pushState;
+
   history.pushState = function() {
     pushState.apply(history, arguments);
+
+    // Dispatch custom event so we can react to navigation
     window.dispatchEvent(new Event("locationchange"));
   };
+
 })(window.history);
 
+/*
+  popstate fires when navigating browser history
+  (back/forward buttons).
+*/
 window.addEventListener("popstate", () => {
   window.dispatchEvent(new Event("locationchange"));
 });
 
+/*
+  Clean up UI whenever navigation occurs
+  or the page is about to unload.
+*/
 window.addEventListener("locationchange", cleanupExtensionUI);
 window.addEventListener("beforeunload", cleanupExtensionUI);
 
+/**
+ * Injects or updates the floating extension UI.
+ *
+ * This overlay displays the scan progress or completion
+ * message directly on the Instagram page so the user can
+ * continue browsing while the scan runs in the background.
+ *
+ * If the container does not exist, it will be created and
+ * appended to the document body.
+ *
+ * @param {Object} options
+ * @param {"running"|"done"} options.status - Current scan state
+ * @param {number} options.progress - Scan progress percentage
+ */
 function injectExtensionUI({
   status = "running",
   progress = 0
 } = {}) {
+    // Prevent UI injection if the scan was cancelled
   if (isCancelled) return;
+
+  /*
+    Create container element if it does not already exist.
+    The container is reused to update progress UI.
+  */
   if (!progressUIContainer || !document.body.contains(progressUIContainer)) {
+
     progressUIContainer = document.createElement("div");
     progressUIContainer.id = "my-extension-root";
+
+    // High z-index ensures the overlay stays above Instagram UI
     progressUIContainer.style.cssText =
       "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:2147483647; font-family:sans-serif;";
+
     document.body.appendChild(progressUIContainer);
   }
 
 // DONE
+/*
+  Displayed after scan completes successfully.
+
+  Provides a small confirmation panel informing the user
+  that results can be viewed from the extension popup.
+*/
 if (status === "done") {
   progressUIContainer.innerHTML = `
     <div style="background:white;color:#0f172a;padding:16px;border-radius:12px;
@@ -344,7 +656,11 @@ if (status === "done") {
 }
 
   // RUNNING
-  const rounded = Math.round(progress || 0);
+  /*
+    Displays the live progress bar while the scan
+    is actively running in the background.
+  */
+const rounded = Math.round(progress || 0);
 
 progressUIContainer.innerHTML = `
   <div style="background:white;padding:16px;border-radius:12px;
