@@ -39,8 +39,7 @@
   "gecko": {
     "id": "instagramwhofollows@yoshiyukinagai",
     "data_collection_permissions": {
-      "required": [],
-      "optional": []
+      "required": ["none"]
     }
   }
 }
