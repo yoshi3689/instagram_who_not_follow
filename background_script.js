@@ -6,218 +6,299 @@
 // Content script only reports progress.
 // Background owns and controls it.
 
-let currentJob = getInitialState()
+/* =====================================================
+   ERROR CODES
+===================================================== */
+
+const ERROR_CODES = {
+  REQUEST_CANCELLED: "REQUEST_CANCELLED",
+  ACCOUNT_TOO_LARGE: "ACCOUNT_TOO_LARGE",
+  NETWORK_ERROR: "NETWORK_ERROR",
+  INVALID_RESPONSE: "INVALID_RESPONSE",
+  USER_NOT_FOUND: "USER_NOT_FOUND",
+  SEARCH_FAILED: "SEARCH_FAILED",
+  SCAN_FAILED: "SCAN_FAILED",
+  LOGIN_CHECK_FAILED: "LOGIN_CHECK_FAILED",
+  START_CHECK_FAILED: "START_CHECK_FAILED",
+  CANCEL_FAILED: "CANCEL_FAILED",
+  INTERNAL_ERROR: "INTERNAL_ERROR"
+};
+
+/* =====================================================
+   🧠 JOB STATE
+===================================================== */
+
+let currentJob = getInitialState();
 
 function getInitialState() {
   return {
     status: "idle",      // idle | running | done | error | cancelled
-    progress: 0,         // 0–100
-    result: null,        // final scan result
-    error: null,         // error message if failed
-    timestamp: null,     // completion time
-    tabId: null          // tab currently running the scan
-  }
+    progress: 0,
+    result: null,
+    error: null,
+    timestamp: null,
+    tabId: null
+  };
 }
 
-/* ===============================
-   🔄 Broadcast state to popup
-================================= */
-// Sends the latest job state to any open popup.
-// If popup is closed, this safely fails silently.
+/* =====================================================
+   ♻ RESET STATE HELPER
+===================================================== */
+
+function resetJobState(newStatus = "idle") {
+  currentJob = getInitialState();
+  currentJob.status = newStatus;
+
+  // Clear badge
+  browser.browserAction.setBadgeText({ text: "" });
+}
+
+function updateJob(patch) {
+  currentJob = {
+    ...currentJob,
+    ...patch,
+    timestamp: Date.now()
+  };
+}
+
+function success(data = null) {
+  return { ok: true, data };
+}
+
+function failure(code, message = code) {
+  return {
+    ok: false,
+    error: {
+      code,
+      message
+    }
+  };
+}
+
+/* =====================================================
+   📡 BROADCAST STATUS TO POPUP
+===================================================== */
+
 async function broadcastStatus() {
   try {
     await browser.runtime.sendMessage({
       action: "STATUS_UPDATE",
       payload: currentJob
     });
-  } catch (e) {
-    // Popup might not be open — that's fine.
+  } catch {
+    // Popup might be closed — that's fine
   }
 }
 
-/* ===============================
-   📩 MESSAGE LISTENER (Background)
-================================= */
-// Background acts as:
-// - State manager
-// - Job controller
-// - Router between popup and content script
+/* =====================================================
+   ACTION HANDLERS
+===================================================== */
+
+const actionHandlers = {
+
+  async CHECK_LOGIN(request, sender) {
+    try {
+      const response = await browser.tabs.sendMessage(
+        sender.tab.id,
+        { action: "CHECK_LOGIN" }
+      );
+
+      return success(response);
+
+    } catch (err) {
+      return failure(
+        ERROR_CODES.LOGIN_CHECK_FAILED,
+        "Login check failed"
+      );
+    }
+  },
+
+
+  async START_CHECK(request) {
+
+    if (currentJob.status === "running") {
+      return success({ status: "already_running" });
+    }
+
+    if (!request.tabId) {
+      return failure(
+        ERROR_CODES.NO_TAB_ID,
+        "No Tab ID provided"
+      );
+    }
+
+    updateJob({
+      ...getInitialState(),
+      status: "running",
+      tabId: request.tabId,
+      progress: 0,
+      result: null,
+      error: null
+    });
+
+    await broadcastStatus();
+
+    try {
+
+      const response = await browser.tabs.sendMessage(
+        request.tabId,
+        {
+          action: "RUN_CHECK",
+          username: request.username
+        }
+      );
+
+      if (!response?.ok) {
+
+        const errorObj = response?.error || {
+          code: ERROR_CODES.SCAN_FAILED,
+          message: "Scan failed"
+        };
+
+        updateJob({
+          status: "error",
+          error: errorObj,
+          progress: 0
+        });
+
+        await broadcastStatus();
+
+        return failure(errorObj.code, errorObj.message);
+      }
+
+
+      updateJob({
+        status: "done",
+        result: response.data,
+        progress: 100
+      });
+
+      await broadcastStatus();
+
+
+      browser.browserAction.setBadgeText({ text: "✓" });
+
+      browser.notifications.create("scan-results", {
+        type: "basic",
+        iconUrl: browser.runtime.getURL("icons/icon-128.svg"),
+        title: "Scan Complete",
+        message: "Check the extension for details"
+      });
+
+      return success({ status: "done" });
+
+    } catch (err) {
+
+      const message = err.message || "Failed to start scan";
+
+      updateJob({
+        status: "error",
+        error: {
+          code: ERROR_CODES.SCAN_FAILED,
+          message
+        }
+      });
+
+      await broadcastStatus();
+
+      return failure(ERROR_CODES.SCAN_FAILED, message);
+    }
+  },
+
+
+  async CANCEL_JOB() {
+
+    if (!currentJob.tabId) {
+      return failure(
+        ERROR_CODES.NO_ACTIVE_JOB,
+        "No active job tab found"
+      );
+    }
+
+    try {
+
+      await browser.tabs.sendMessage(
+        currentJob.tabId,
+        { action: "CANCEL_JOB" }
+      );
+
+      updateJob({
+        status: "cancelled",
+        progress: 0
+      });
+
+      await broadcastStatus();
+
+      return success({ status: "cancelled" });
+
+    } catch (err) {
+
+      return failure(
+        ERROR_CODES.CANCEL_FAILED,
+        "Cancel failed"
+      );
+    }
+  },
+
+
+  GET_STATUS() {
+    return success(currentJob);
+  },
+
+
+  async JOB_PROGRESS(request) {
+
+    if (currentJob.status !== "running") {
+      return success({ ignored: true });
+    }
+
+    updateJob({
+      progress: request.progress
+    });
+
+    await broadcastStatus();
+
+    return success({ progress: request.progress });
+  }
+};
+
+
+
+/* =====================================================
+   GLOBAL MESSAGE LISTENER
+===================================================== */
 
 browser.runtime.onMessage.addListener(async (request, sender) => {
 
-  /* ===============================
-     🔐 CHECK LOGIN
-  ================================= */
-  // Popup asks background.
-  // Background forwards the request to the active tab.
-  // Content script performs actual DOM check.
+  const handler = actionHandlers[request.action];
 
-  if (request.action === "CHECK_LOGIN") {
-
-    const tabId = sender.tab?.id;
-
-    if (!tabId) {
-      return { loggedIn: false };
-    }
-
-    try {
-      const response = await browser.tabs.sendMessage(tabId, {
-        action: "CHECK_LOGIN"
-      });
-
-      return response || { loggedIn: false };
-
-    } catch {
-      return { loggedIn: false };
-    }
+  if (!handler) {
+    return failure(
+      ERROR_CODES.UNKNOWN_ACTION,
+      `Unknown action: ${request.action}`
+    );
   }
 
-  /* ===============================
-     ❌ CANCEL JOB
-  ================================= */
-  // Popup → Background → Content Script
-  // Background also resets its own state.
+  try {
 
-  if (request.action === "CANCEL_JOB") {
+    const result = await handler(request, sender);
 
-    if (!currentJob.tabId) {
-      return { success: false, error: "No active job tab found" };
+    if (!result || typeof result.ok !== "boolean") {
+      return failure(
+        ERROR_CODES.INVALID_HANDLER_RESPONSE,
+        "Invalid handler response"
+      );
     }
 
-    try {
-      // Tell content script to stop scanning
-      await browser.tabs.sendMessage(currentJob.tabId, {
-        action: "CANCEL_JOB"
-      });
+    return result;
 
-      // Reset internal state
-      currentJob = getInitialState();
-      currentJob.status = "cancelled";
+  } catch (err) {
 
-      // Clear badge
-      browser.browserAction.setBadgeText({ text: "" });
+    console.error("Handler error:", err);
 
-      // Notify popup
-      await broadcastStatus();
-
-      return { success: true };
-
-    } catch (err) {
-      console.error("Cancel failed:", err);
-      return { success: false };
-    }
+    return failure(
+      ERROR_CODES.INTERNAL_ERROR,
+      err.message || "Internal error"
+    );
   }
-
-  /* ===============================
-     📊 GET STATUS
-  ================================= */
-  // Popup uses this when opened to sync UI with background state.
-
-  if (request.action === "GET_STATUS") {
-    return currentJob;
-  }
-
-  /* ===============================
-     ▶ START CHECK
-  ================================= */
-  // Popup → Background
-  // Background validates state
-  // Background tells specific tab to start scanning
-
-  if (request.action === "START_CHECK") {
-
-    // Prevent duplicate jobs
-    if (currentJob && currentJob.status === "running") {
-      return Promise.resolve({ status: "already_running" });
-    }
-
-    const targetTabId = request.tabId;
-
-    if (!targetTabId) {
-      return Promise.resolve({
-        status: "error",
-        message: "No Tab ID provided"
-      });
-    }
-
-    // Initialize new job
-    currentJob = {
-      status: "running",
-      progress: 0,
-      result: null,
-      error: null,
-      timestamp: null,
-      tabId: targetTabId
-    };
-
-    await broadcastStatus();
-
-    // Tell content script to begin
-    browser.tabs.sendMessage(targetTabId, {
-      action: "RUN_CHECK"
-    });
-
-    return Promise.resolve({ status: "started" });
-  }
-
-  /* ===============================
-     📈 JOB PROGRESS
-  ================================= */
-  // Content Script → Background
-  // Background updates state and badge.
-
-  if (request.action === "JOB_PROGRESS") {
-
-    currentJob.progress = request.progress;
-
-    // Visual badge feedback
-    browser.browserAction.setBadgeBackgroundColor({
-      color: "#4caf50"
-    });
-
-    browser.browserAction.setBadgeText({
-      text: currentJob.progress + "%"
-    });
-
-    await broadcastStatus();
-
-    return;
-  }
-
-  /* ===============================
-     ✅ JOB DONE
-  ================================= */
-  // Content Script → Background
-  // Finalizes state and triggers notification.
-
-  if (request.action === "JOB_DONE") {
-
-    // Safety guard:
-    // Ignore if job was already cancelled or replaced
-    if (!currentJob || currentJob.status !== "running") {
-      return;
-    }
-
-    currentJob.status = "done";
-    currentJob.result = request.result;
-    currentJob.progress = 100;
-    currentJob.timestamp = Date.now();
-
-    // User notification
-    browser.notifications.create("scan-results", {
-      type: "basic",
-      iconUrl: browser.runtime.getURL("icons/icon-128.svg"),
-      title: "Scan Complete! 🔍",
-      message: `Check the extension for details`,
-      priority: 2
-    });
-
-    // Badge shows completion
-    browser.browserAction.setBadgeText({ text: "✓" });
-
-    await broadcastStatus();
-
-    return;
-  }
-
 });
