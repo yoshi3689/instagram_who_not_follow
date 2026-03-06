@@ -34,5 +34,14 @@
 	},
     "web_accessible_resources": [
      "./urls.js"
-  ]
+  ],
+  "browser_specific_settings": {
+  "gecko": {
+    "id": "instagramwhofollows@yoshiyukinagai",
+    "data_collection_permissions": {
+      "required": [],
+      "optional": []
+    }
+  }
+}
 }
